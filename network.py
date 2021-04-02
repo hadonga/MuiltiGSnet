@@ -1,17 +1,501 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+"""
+Transformer from ViT. Depth-wise Separable Unet from SmaAt-Unet
+Licensed under MIT License [see LICENSE].
+This work is inspired from their public code.
+"""
+
 '''
 2021.1.18
 各种网络结构，用于model里面调用
 2021.2.15
-加入 dwnet
+加入 DSUnet
+2021.4.2
+加入 Trans DSUnet
+
 '''
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import copy
+import logging
+import math
+
+import ml_collections
+from torch.nn import CrossEntropyLoss, Dropout, Softmax, Linear, Conv2d, LayerNorm
+from torch.nn.modules.utils import _pair
+from scipy import ndimage
+
 our_in_ch=64
 our_out_ch=3
 
+
 # ---------------------------------------------------------------------------- #
-# dw unet 网络
+# Trans DSUnet 网络
+# ---------------------------------------------------------------------------- #
+def get_net_config():
+    """Returns the ViT-B/16 configuration."""
+    config = ml_collections.ConfigDict()
+    config.patches = ml_collections.ConfigDict({'size': (16, 16)})
+    config.hidden_size = 3072  # 768
+    config.transformer = ml_collections.ConfigDict()
+    config.transformer.mlp_dim = 12288  # 3072
+    config.transformer.num_heads = 12
+    config.transformer.num_layers = 12
+    config.transformer.attention_dropout_rate = 0.0
+    config.transformer.dropout_rate = 0.1
+
+    config.classifier = 'seg'
+    config.representation_size = None
+    config.resnet_pretrained_path = None
+    config.pretrained_path = '../model/vit_checkpoint/imagenet21k/ViT-B_16.npz'
+    config.patch_size = 16
+
+    config.decoder_channels = (256, 128, 64, 16)
+    config.n_classes = 2
+    config.activation = 'softmax'
+    return config
+
+
+logger = logging.getLogger(__name__)
+
+ATTENTION_Q = "MultiHeadDotProductAttention_1/query"
+ATTENTION_K = "MultiHeadDotProductAttention_1/key"
+ATTENTION_V = "MultiHeadDotProductAttention_1/value"
+ATTENTION_OUT = "MultiHeadDotProductAttention_1/out"
+FC_0 = "MlpBlock_3/Dense_0"
+FC_1 = "MlpBlock_3/Dense_1"
+ATTENTION_NORM = "LayerNorm_0"
+MLP_NORM = "LayerNorm_2"
+
+
+def np2th(weights, conv=False):
+    """Possibly convert HWIO to OIHW."""
+    if conv:
+        weights = weights.transpose([3, 2, 0, 1])
+    return torch.from_numpy(weights)
+
+
+ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu}
+
+
+class Attention(nn.Module):
+    def __init__(self, config):
+        super(Attention, self).__init__()
+        self.num_attention_heads = config.transformer["num_heads"]
+        self.attention_head_size = int(config.hidden_size / self.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+        self.query = Linear(config.hidden_size, self.all_head_size)
+        self.key = Linear(config.hidden_size, self.all_head_size)
+        self.value = Linear(config.hidden_size, self.all_head_size)
+
+        self.out = Linear(config.hidden_size, config.hidden_size)
+        self.attn_dropout = Dropout(config.transformer["attention_dropout_rate"])
+        self.proj_dropout = Dropout(config.transformer["attention_dropout_rate"])
+
+        self.softmax = Softmax(dim=-1)
+
+    def transpose_for_scores(self, x):
+        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_x_shape)
+        return x.permute(0, 2, 1, 3)
+
+    def forward(self, hidden_states):
+        mixed_query_layer = self.query(hidden_states)
+        mixed_key_layer = self.key(hidden_states)
+        mixed_value_layer = self.value(hidden_states)
+
+        query_layer = self.transpose_for_scores(mixed_query_layer)
+        key_layer = self.transpose_for_scores(mixed_key_layer)
+        value_layer = self.transpose_for_scores(mixed_value_layer)
+
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        attention_probs = self.softmax(attention_scores)
+        weights = None
+        attention_probs = self.attn_dropout(attention_probs)
+
+        context_layer = torch.matmul(attention_probs, value_layer)
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
+        attention_output = self.out(context_layer)
+        attention_output = self.proj_dropout(attention_output)
+        return attention_output, weights
+
+
+class Mlp(nn.Module):
+    def __init__(self, config):
+        super(Mlp, self).__init__()
+        self.fc1 = Linear(config.hidden_size, config.transformer["mlp_dim"])
+        self.fc2 = Linear(config.transformer["mlp_dim"], config.hidden_size)
+        self.act_fn = ACT2FN["gelu"]
+        self.dropout = Dropout(config.transformer["dropout_rate"])
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.xavier_uniform_(self.fc1.weight)
+        nn.init.xavier_uniform_(self.fc2.weight)
+        nn.init.normal_(self.fc1.bias, std=1e-6)
+        nn.init.normal_(self.fc2.bias, std=1e-6)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act_fn(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        x = self.dropout(x)
+        return x
+
+
+class Embeddings(nn.Module):
+    """Construct the embeddings from patch, position embeddings.
+    """
+
+    def __init__(self, config, img_size, in_channels=3):  # img_size= 32,32  in_channels=256
+        super(Embeddings, self).__init__()
+        self.hybrid = None
+        self.config = config
+        img_size = _pair(img_size)
+
+        patch_size = (1, 1)
+        n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])  # (256)
+
+        self.patch_embeddings = Conv2d(in_channels=in_channels,  # 256
+                                       out_channels=config.hidden_size,  # 3072
+                                       kernel_size=patch_size,  # (1,1)
+                                       stride=patch_size)  # (1,1)
+        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches, config.hidden_size))  # (1,256,3072)
+        self.dropout = Dropout(config.transformer["dropout_rate"])
+
+    def forward(self, x):  # x3:(B,256,16,16)
+        x = self.patch_embeddings(x)  # (B, 3072,16,16)
+        x = x.flatten(2)  # (B,3072,256)
+        x = x.transpose(-1, -2)  # (B, n_patches, hidden)   # (B,256,3072)
+
+        embeddings = x + self.position_embeddings  # (B,256,3072)
+        embeddings = self.dropout(embeddings)
+
+        return embeddings  #
+
+
+class Block(nn.Module):
+    def __init__(self, config):
+        super(Block, self).__init__()
+        self.hidden_size = config.hidden_size
+        self.attention_norm = LayerNorm(config.hidden_size, eps=1e-6)
+        self.ffn_norm = LayerNorm(config.hidden_size, eps=1e-6)
+        self.ffn = Mlp(config)
+        self.attn = Attention(config)
+
+    def forward(self, x):
+        h = x
+        x = self.attention_norm(x)
+        x, weights = self.attn(x)
+        x = x + h
+
+        h = x
+        x = self.ffn_norm(x)
+        x = self.ffn(x)
+        x = x + h
+        return x
+
+
+class Encoder(nn.Module):
+    def __init__(self, config):
+        super(Encoder, self).__init__()
+        self.layer = nn.ModuleList()  # 生成空list并注册到网络
+        self.encoder_norm = LayerNorm(config.hidden_size, eps=1e-6)  # 3072
+        self.conv = nn.Conv2d(in_channels=3072, out_channels = 256, kernel_size = 1)  # 3072->256
+        for _ in range(config.transformer["num_layers"]):  # 12 transformer的层
+            layer = Block(config)
+            self.layer.append(copy.deepcopy(layer))
+
+    def forward(self, hidden_states):  # (B, 256,3072)
+        for layer_block in self.layer:  # list[12]
+            hidden_states = layer_block(hidden_states)  # 12
+        encoded = self.encoder_norm(hidden_states)
+        B, n_patch, hidden = encoded.size()  # (B,256,3072)  # reshape from (B, n_patch, hidden) to (B, h, w, hidden)
+        h, w = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))
+        x = encoded.permute(0, 2, 1)
+        x = x.contiguous().view(B, hidden, h, w)
+        x = self.conv(x)
+        return x  # (B,256,16,16)
+
+
+class Transformer(nn.Module):
+    def __init__(self, config, img_size):  # vis:?
+        super(Transformer, self).__init__()
+        self.embeddings = Embeddings(config, img_size=img_size)
+        self.encoder = Encoder(config)
+
+    def forward(self, input_ids):  # 入口 x3 input: (B,256,32,32)
+        embedding_output = self.embeddings(input_ids)  # input_ids：(B,64,128,128) ; embedding_output= (B, 64, 768)
+        encoded = self.encoder(embedding_output)  #  (B,256,16,16)
+        # encoded = encoded.transpose(-1, -2)
+        return encoded # 我们只需要encoded
+
+
+# DSC Module
+class OutConv(nn.Module):  # 一般的1x1conv2d.
+    def __init__(self, in_channels, out_channels):
+        super(OutConv, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class DepthwiseSeparableConv(nn.Module):  # DSC
+    def __init__(self, in_channels, output_channels, kernel_size, padding=0, kernels_per_layer=1):
+        super(DepthwiseSeparableConv, self).__init__()
+        self.depthwise = nn.Conv2d(in_channels, in_channels * kernels_per_layer, kernel_size=kernel_size,
+                                   padding=padding,
+                                   groups=in_channels)
+        self.pointwise = nn.Conv2d(in_channels * kernels_per_layer, output_channels, kernel_size=1)
+
+    def forward(self, x):
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        return x
+
+
+class DoubleConvDS(nn.Module):  # 2次DSC
+    """(convolution => [BN] => ReLU) * 2"""
+
+    def __init__(self, in_channels, out_channels, mid_channels=None, kernels_per_layer=1):
+        super().__init__()
+        if not mid_channels:
+            mid_channels = out_channels
+        self.double_conv = nn.Sequential(
+            DepthwiseSeparableConv(in_channels, mid_channels, kernel_size=3, kernels_per_layer=kernels_per_layer,
+                                   padding=1),
+            nn.BatchNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+            DepthwiseSeparableConv(mid_channels, out_channels, kernel_size=3, kernels_per_layer=kernels_per_layer,
+                                   padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.double_conv(x)
+
+
+class DownDS(nn.Module):  # e.g
+    """Downscaling with maxpool then double conv"""
+
+    def __init__(self, in_channels, out_channels, kernels_per_layer=1):
+        super().__init__()
+        self.maxpool_conv = nn.Sequential(
+            nn.MaxPool2d(2),  # stride=2
+            DoubleConvDS(in_channels, out_channels, kernels_per_layer=kernels_per_layer)
+        )
+
+    def forward(self, x):
+        return self.maxpool_conv(x)
+
+
+class UpDS(nn.Module):  #
+    """Upscaling then double conv"""
+
+    def __init__(self, in_channels, out_channels, bilinear=True, kernels_per_layer=1):
+        super().__init__()
+
+        # if bilinear, use the normal convolutions to reduce the number of channels
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv = DoubleConvDS(in_channels, out_channels, in_channels // 2, kernels_per_layer=kernels_per_layer)
+        else:
+            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            self.conv = DoubleConvDS(in_channels, out_channels, kernels_per_layer=kernels_per_layer)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        # input is CHW
+        diffY = x2.size()[2] - x1.size()[2]  # H2-H1
+        diffX = x2.size()[3] - x1.size()[3]  # W2-W1
+
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])  # x1 and x2  same size
+        # if you have padding issues, see
+        # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
+        # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
+
+
+class OutConv(nn.Module):  # Conv2d
+    def __init__(self, in_channels, out_channels):
+        super(OutConv, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size(0), -1)
+
+
+# CBAM Module
+class ChannelAttention(nn.Module):
+    def __init__(self, input_channels, reduction_ratio=16):
+        super(ChannelAttention, self).__init__()
+        self.input_channels = input_channels
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        #  https://github.com/luuuyi/CBAM.PyTorch/blob/master/model/resnet_cbam.py
+        #  uses Convolutions instead of Linear
+        self.MLP = nn.Sequential(
+            Flatten(),
+            nn.Linear(input_channels, input_channels // reduction_ratio),
+            nn.ReLU(),
+            nn.Linear(input_channels // reduction_ratio, input_channels)
+        )
+
+    def forward(self, x):
+        # Take the input and apply average and max pooling
+        avg_values = self.avg_pool(x)
+        max_values = self.max_pool(x)
+        out = self.MLP(avg_values) + self.MLP(max_values)
+        scale = x * torch.sigmoid(out).unsqueeze(2).unsqueeze(3).expand_as(x)
+        return scale
+
+
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        assert kernel_size in (3, 7), 'kernel size must be 3 or 7'
+        padding = 3 if kernel_size == 7 else 1
+        self.conv = nn.Conv2d(2, 1, kernel_size=kernel_size, padding=padding, bias=False)
+        self.bn = nn.BatchNorm2d(1)
+
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        out = torch.cat([avg_out, max_out], dim=1)
+        out = self.conv(out)
+        out = self.bn(out)
+        scale = x * torch.sigmoid(out)
+        return scale
+
+
+class CBAM(nn.Module):
+    def __init__(self, input_channels, reduction_ratio=16, kernel_size=7):
+        super(CBAM, self).__init__()
+        self.channel_att = ChannelAttention(input_channels, reduction_ratio=reduction_ratio)
+        self.spatial_att = SpatialAttention(kernel_size=kernel_size)
+
+    def forward(self, x):
+        out = self.channel_att(x)
+        out = self.spatial_att(out)
+        return out
+
+
+# Trans + DSC + CBAM
+class TransDSUnet_lite(nn.Module):
+    def __init__(self, n_channels, n_classes, kernels_per_layer=2, bilinear=True, reduction_ratio=16):
+        super(TransDSUnet_lite, self).__init__()
+        trans_config = get_net_config()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        kernels_per_layer = kernels_per_layer
+        self.bilinear = bilinear
+        reduction_ratio = reduction_ratio
+
+        self.inc = DoubleConvDS(self.n_channels, 64,
+                                kernels_per_layer=kernels_per_layer)  # (64,128,128) -> (64,128,128)
+        self.cbam1 = CBAM(64, reduction_ratio=reduction_ratio)
+        self.down1 = DownDS(64, 128, kernels_per_layer=kernels_per_layer)  # (64,128,128)-> (128,64,64)
+
+        self.cbam2 = CBAM(128, reduction_ratio=reduction_ratio)
+
+        self.down2 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)  # (128,64,64)-> (256,32,32)
+        self.cbam3 = CBAM(256, reduction_ratio=reduction_ratio)
+
+        factor = 2 if self.bilinear else 1
+        self.down3 = DownDS(256, 512 // factor, kernels_per_layer=kernels_per_layer)  # (256,32,32)-> (256,16,16)
+        # self.cbam4 = CBAM(512 //factor, reduction_ratio=reduction_ratio)#(256,16,16)
+        # Trans_input: (256,16,16)
+        self.trans = Transformer(config=trans_config, img_size=16)  # out:(768,16,16)->(256,16,16)
+
+        self.up2 = UpDS(512, 256 // factor, self.bilinear,
+                        kernels_per_layer=kernels_per_layer)  # (512,16,16) -> (128,32,32)
+        self.up3 = UpDS(256, 128 // factor, self.bilinear,
+                        kernels_per_layer=kernels_per_layer)  # (256,32,32) -> (128,64,64)
+        self.up4 = UpDS(128, 64, self.bilinear, kernels_per_layer=kernels_per_layer)  # (128,64,64) -> (64,128,128)
+
+        self.outc = OutConv(64, self.n_classes)  # (64,128,128)->(3,128,128)
+
+    def forward(self, x):
+        x1 = self.inc(x)
+        x1Att = self.cbam1(x1)  # x1: (64,128,128)
+        x2 = self.down1(x1)
+        x2Att = self.cbam2(x2)  # x2 : (128,64,64)
+        x3 = self.down2(x2)  # x3：（256，32，32）
+
+        # x3Att = self.cbam3(x3) ## 这步att变为 trans
+        x3Trans = self.trans(x3)  # 32
+        # upsample 32->64
+
+        x = self.up3(x3Trans, x2Att)  # (128,64,64) + (128,64,64)
+        x = self.up4(x, x1Att)
+        logits = self.outc(x)
+        return logits
+
+
+# class TransDSUnet(nn.Module):
+#     def __init__(self, n_channels, n_classes, kernels_per_layer=2, bilinear=True, reduction_ratio=16):
+#         super(TransDSUnet, self).__init__()
+#         self.n_channels = n_channels
+#         self.n_classes = n_classes
+#         kernels_per_layer = kernels_per_layer
+#         self.bilinear = bilinear
+#         reduction_ratio = reduction_ratio
+#
+#         self.inc = DoubleConvDS(self.n_channels, 64, kernels_per_layer=kernels_per_layer)
+#         self.cbam1 = CBAM(64, reduction_ratio=reduction_ratio)
+#         self.down1 = DownDS(64, 128, kernels_per_layer=kernels_per_layer)
+#         self.cbam2 = CBAM(128, reduction_ratio=reduction_ratio)
+#         self.down2 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)
+#         self.cbam3 = CBAM(256, reduction_ratio=reduction_ratio)
+#         self.down3 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)
+#         self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio)
+#         factor = 2 if self.bilinear else 1
+#         self.down4 = DownDS(512, 1024 // factor, kernels_per_layer=kernels_per_layer)
+#         self.cbam5 = CBAM(1024 // factor, reduction_ratio=reduction_ratio)
+#         self.up1 = UpDS(1024, 512 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+#         self.up2 = UpDS(512, 256 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+#         self.up3 = UpDS(256, 128 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+#         self.up4 = UpDS(128, 64, self.bilinear, kernels_per_layer=kernels_per_layer)
+#
+#         self.outc = OutConv(64, self.n_classes)
+#
+#     def forward(self, x):
+#         x1 = self.inc(x)
+#         x1Att = self.cbam1(x1)
+#         x2 = self.down1(x1)
+#         x2Att = self.cbam2(x2)
+#         x3 = self.down2(x2)
+#         x3Att = self.cbam3(x3)
+#         x4 = self.down3(x3)
+#         x4Att = self.cbam4(x4)
+#         x5 = self.down4(x4)
+#         x5Att = self.cbam5(x5)
+#         x = self.up1(x5Att, x4Att)
+#         x = self.up2(x, x3Att)
+#         x = self.up3(x, x2Att)
+#         x = self.up4(x, x1Att)
+#         logits = self.outc(x)
+#         return logits
+
+
+# ---------------------------------------------------------------------------- #
+# DSUnet
 # ---------------------------------------------------------------------------- #
 class OutConv(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -207,9 +691,9 @@ class SmaAt_UNet(nn.Module):
 
 
 # ---------------------------------------------------------------------------- #
-# MLP 网络
+# Original MLP
 # ---------------------------------------------------------------------------- #
-class Mlp(nn.Module):
+class Org_Mlp(nn.Module):
     def __init__(self,num_input_features=64):
         super().__init__()
         print("Using MLP...")
@@ -258,7 +742,7 @@ class Mlp(nn.Module):
         return cls_preds.permute(0,3,1,2) #,nor_preds.permute(0,3,1,2)
 
 # ---------------------------------------------------------------------------- #
-# New_net 拼接修改的 MLP 和 unet
+# New_net  MLP&unet
 # ---------------------------------------------------------------------------- #
 
 class New_net(nn.Module):
@@ -339,7 +823,7 @@ class New_net(nn.Module):
 
 
 # ---------------------------------------------------------------------------- #
-# Unet 网络
+# Unet
 # ---------------------------------------------------------------------------- #
 class conv_block(nn.Module):
     """

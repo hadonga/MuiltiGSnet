@@ -4,15 +4,15 @@ Licensed under MIT License [see LICENSE].
 This work is inspired from their public code.
 """
 
-'''
+''' to delete
 2021.1.18
 各种网络结构，用于model里面调用
 2021.2.15
 加入 DSUnet
 2021.4.2
 加入 Trans DSUnet
-
 '''
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,10 +29,21 @@ from scipy import ndimage
 our_in_ch=64
 our_out_ch=3
 
+# ---------------------------------------------------------------------------- #
+# Trans DSUnet 网络   1362.053899M
+# ---------------------------------------------------------------------------- #
+logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------- #
-# Trans DSUnet 网络
-# ---------------------------------------------------------------------------- #
+ATTENTION_Q = "MultiHeadDotProductAttention_1/query"
+ATTENTION_K = "MultiHeadDotProductAttention_1/key"
+ATTENTION_V = "MultiHeadDotProductAttention_1/value"
+ATTENTION_OUT = "MultiHeadDotProductAttention_1/out"
+FC_0 = "MlpBlock_3/Dense_0"
+FC_1 = "MlpBlock_3/Dense_1"
+ATTENTION_NORM = "LayerNorm_0"
+MLP_NORM = "LayerNorm_2"
+ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu}
+
 def get_net_config():
     """Returns the ViT-B/16 configuration."""
     config = ml_collections.ConfigDict()
@@ -56,28 +67,11 @@ def get_net_config():
     config.activation = 'softmax'
     return config
 
-
-logger = logging.getLogger(__name__)
-
-ATTENTION_Q = "MultiHeadDotProductAttention_1/query"
-ATTENTION_K = "MultiHeadDotProductAttention_1/key"
-ATTENTION_V = "MultiHeadDotProductAttention_1/value"
-ATTENTION_OUT = "MultiHeadDotProductAttention_1/out"
-FC_0 = "MlpBlock_3/Dense_0"
-FC_1 = "MlpBlock_3/Dense_1"
-ATTENTION_NORM = "LayerNorm_0"
-MLP_NORM = "LayerNorm_2"
-
-
 def np2th(weights, conv=False):
     """Possibly convert HWIO to OIHW."""
     if conv:
         weights = weights.transpose([3, 2, 0, 1])
     return torch.from_numpy(weights)
-
-
-ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu}
-
 
 class Attention(nn.Module):
     def __init__(self, config):
@@ -149,12 +143,10 @@ class Mlp(nn.Module):
         x = self.dropout(x)
         return x
 
-
 class Embeddings(nn.Module):
     """Construct the embeddings from patch, position embeddings.
     """
-
-    def __init__(self, config, img_size, in_channels=3):  # img_size= 32,32  in_channels=256
+    def __init__(self, config, img_size, in_channels=256):  # img_size= 32,32  in_channels=256
         super(Embeddings, self).__init__()
         self.hybrid = None
         self.config = config
@@ -174,7 +166,6 @@ class Embeddings(nn.Module):
         x = self.patch_embeddings(x)  # (B, 3072,16,16)
         x = x.flatten(2)  # (B,3072,256)
         x = x.transpose(-1, -2)  # (B, n_patches, hidden)   # (B,256,3072)
-
         embeddings = x + self.position_embeddings  # (B,256,3072)
         embeddings = self.dropout(embeddings)
 
@@ -235,8 +226,7 @@ class Transformer(nn.Module):
         embedding_output = self.embeddings(input_ids)  # input_ids：(B,64,128,128) ; embedding_output= (B, 64, 768)
         encoded = self.encoder(embedding_output)  #  (B,256,16,16)
         # encoded = encoded.transpose(-1, -2)
-        return encoded # 我们只需要encoded
-
+        return encoded
 
 # DSC Module
 class OutConv(nn.Module):  # 一般的1x1conv2d.
@@ -260,7 +250,6 @@ class DepthwiseSeparableConv(nn.Module):  # DSC
         x = self.depthwise(x)
         x = self.pointwise(x)
         return x
-
 
 class DoubleConvDS(nn.Module):  # 2次DSC
     """(convolution => [BN] => ReLU) * 2"""
@@ -395,7 +384,6 @@ class CBAM(nn.Module):
         out = self.spatial_att(out)
         return out
 
-
 # Trans + DSC + CBAM
 class TransDSUnet_lite(nn.Module):
     def __init__(self, n_channels, n_classes, kernels_per_layer=2, bilinear=True, reduction_ratio=16):
@@ -495,8 +483,8 @@ class TransDSUnet_lite(nn.Module):
 
 
 # ---------------------------------------------------------------------------- #
-# DSUnet
-# ---------------------------------------------------------------------------- #
+# DSUnet  0.27M paramerters
+# --------------- ------------------------------------------------------------- #
 class OutConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(OutConv, self).__init__()
@@ -644,9 +632,54 @@ class CBAM(nn.Module):
         out = self.spatial_att(out)
         return out
 
-class SmaAt_UNet(nn.Module):
+# class SmaAt_UNet(nn.Module):
+#     def __init__(self, n_channels, n_classes, kernels_per_layer=2, bilinear=True, reduction_ratio=16):
+#         super(SmaAt_UNet, self).__init__()
+#         self.n_channels = n_channels
+#         self.n_classes = n_classes
+#         kernels_per_layer = kernels_per_layer
+#         self.bilinear = bilinear
+#         reduction_ratio = reduction_ratio
+#
+#         self.inc = DoubleConvDS(self.n_channels, 64, kernels_per_layer=kernels_per_layer)
+#         self.cbam1 = CBAM(64, reduction_ratio=reduction_ratio)
+#         self.down1 = DownDS(64, 128, kernels_per_layer=kernels_per_layer)
+#         self.cbam2 = CBAM(128, reduction_ratio=reduction_ratio)
+#         self.down2 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)
+#         self.cbam3 = CBAM(256, reduction_ratio=reduction_ratio)
+#         self.down3 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)
+#         self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio)
+#         factor = 2 if self.bilinear else 1
+#         self.down4 = DownDS(512, 1024 // factor, kernels_per_layer=kernels_per_layer)
+#         self.cbam5 = CBAM(1024 // factor, reduction_ratio=reduction_ratio)
+#         self.up1 = UpDS(1024, 512 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+#         self.up2 = UpDS(512, 256 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+#         self.up3 = UpDS(256, 128 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+#         self.up4 = UpDS(128, 64, self.bilinear, kernels_per_layer=kernels_per_layer)
+#
+#         self.outc = OutConv(64, self.n_classes)
+#
+#     def forward(self, x):
+#         x1 = self.inc(x)
+#         x1Att = self.cbam1(x1)
+#         x2 = self.down1(x1)
+#         x2Att = self.cbam2(x2)
+#         x3 = self.down2(x2)
+#         x3Att = self.cbam3(x3)
+#         x4 = self.down3(x3)
+#         x4Att = self.cbam4(x4)
+#         x5 = self.down4(x4)
+#         x5Att = self.cbam5(x5)
+#         x = self.up1(x5Att, x4Att)
+#         x = self.up2(x, x3Att)
+#         x = self.up3(x, x2Att)
+#         x = self.up4(x, x1Att)
+#         logits = self.outc(x)
+#         return logits
+
+class DS_Unet(nn.Module):
     def __init__(self, n_channels, n_classes, kernels_per_layer=2, bilinear=True, reduction_ratio=16):
-        super(SmaAt_UNet, self).__init__()
+        super(DS_Unet, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         kernels_per_layer = kernels_per_layer
@@ -657,15 +690,16 @@ class SmaAt_UNet(nn.Module):
         self.cbam1 = CBAM(64, reduction_ratio=reduction_ratio)
         self.down1 = DownDS(64, 128, kernels_per_layer=kernels_per_layer)
         self.cbam2 = CBAM(128, reduction_ratio=reduction_ratio)
-        self.down2 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)
-        self.cbam3 = CBAM(256, reduction_ratio=reduction_ratio)
-        self.down3 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)
-        self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio)
         factor = 2 if self.bilinear else 1
-        self.down4 = DownDS(512, 1024 // factor, kernels_per_layer=kernels_per_layer)
-        self.cbam5 = CBAM(1024 // factor, reduction_ratio=reduction_ratio)
-        self.up1 = UpDS(1024, 512 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
-        self.up2 = UpDS(512, 256 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+        self.down2 = DownDS(128, 256 // factor, kernels_per_layer=kernels_per_layer)
+        self.cbam3 = CBAM(256 // factor, reduction_ratio=reduction_ratio)
+        # self.down3 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)
+        # self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio)
+        # factor = 2 if self.bilinear else 1
+        # self.down4 = DownDS(512, 1024 // factor, kernels_per_layer=kernels_per_layer)
+        # self.cbam5 = CBAM(1024 // factor, reduction_ratio=reduction_ratio)
+        # self.up1 = UpDS(1024, 512 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
+        # self.up2 = UpDS(512, 256 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
         self.up3 = UpDS(256, 128 // factor, self.bilinear, kernels_per_layer=kernels_per_layer)
         self.up4 = UpDS(128, 64, self.bilinear, kernels_per_layer=kernels_per_layer)
 
@@ -678,13 +712,13 @@ class SmaAt_UNet(nn.Module):
         x2Att = self.cbam2(x2)
         x3 = self.down2(x2)
         x3Att = self.cbam3(x3)
-        x4 = self.down3(x3)
-        x4Att = self.cbam4(x4)
-        x5 = self.down4(x4)
-        x5Att = self.cbam5(x5)
-        x = self.up1(x5Att, x4Att)
-        x = self.up2(x, x3Att)
-        x = self.up3(x, x2Att)
+        # x4 = self.down3(x3)
+        # x4Att = self.cbam4(x4)
+        # x5 = self.down4(x4)
+        # x5Att = self.cbam5(x5)
+        # x = self.up1(x5Att, x4Att)
+        # x = self.up2(x3Att, x2Att)
+        x = self.up3(x3Att, x2Att)
         x = self.up4(x, x1Att)
         logits = self.outc(x)
         return logits
@@ -903,32 +937,23 @@ class U_Net(nn.Module):
 
     def forward(self, x):
         e1 = self.Conv1(x)
-
         e2 = self.Maxpool1(e1)
         e2 = self.Conv2(e2)
-
         e3 = self.Maxpool2(e2)
         e3 = self.Conv3(e3)
-
         e4 = self.Maxpool3(e3)
         e4 = self.Conv4(e4)
-
         e5 = self.Maxpool4(e4)
         e5 = self.Conv5(e5)
-
         d5 = self.Up5(e5)
         d5 = torch.cat((e4, d5), dim=1)
-
         d5 = self.Up_conv5(d5)
-
         d4 = self.Up4(d5)
         d4 = torch.cat((e3, d4), dim=1)
         d4 = self.Up_conv4(d4)
-
         d3 = self.Up3(d4)
         d3 = torch.cat((e2, d3), dim=1)
         d3 = self.Up_conv3(d3)
-
         d2 = self.Up2(d3)
         d2 = torch.cat((e1, d2), dim=1)
         d2 = self.Up_conv2(d2)

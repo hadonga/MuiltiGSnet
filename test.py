@@ -8,8 +8,8 @@ import yaml
 import time
 
 # from gdn_dataset import kitti_gnd
-from model import Our_UNet, Our_AUNet, Our_DW_UNet,Our_UNet_2plus
-from utils import points_to_voxel
+from model import Our_DW_UNet
+from tools.utils import points_to_voxel
 
 '''2021.1.27
 用于测试模型准确度，交并比，时间。

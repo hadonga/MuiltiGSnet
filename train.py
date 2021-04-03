@@ -10,8 +10,7 @@
 '''
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"  # 留出前几个GPU跑其他程序, 需要在导入模型前定义
-import numpy as np
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"  # 留出前几个GPU跑其他程序, 需要在导入模型前定义
 import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -23,9 +22,8 @@ import shutil
 
 from dataset_loader import kitti_loader
 # from gdn_dataset import kitti_gnd
-from model import Our_UNet, Our_AUNet, Our_UNet_2plus,Our_New_Net,Our_MLP,Our_DW_UNet
-from loss import SpatialSmoothLoss, ClsLoss
-from utils import points_to_voxel
+from model import Our_trans_DSUNet
+from tools.utils import points_to_voxel
 
 # ---------------------------------------------------------------------------- #
 # Load config ; declare Meter class, LearningRateSchedule class, checkpointer, etc.
@@ -97,18 +95,22 @@ test_dataloader = DataLoader(test_dataset, batch_size=cfg.batch_size * cfg.num_g
                              num_workers=cfg.num_workers, pin_memory=True, drop_last=True)
 
 # model = Our_AUNet(cfg)
-model = Our_DW_UNet(cfg)
+# model = Our_DS_UNet(cfg)
+model = Our_trans_DSUNet(cfg)
+print("Model has {} paramerters in total".format(sum(x.numel() for x in model.parameters())))
+
 # model = Our_UNet(cfg)
 if torch.cuda.device_count() > 1:
     model = nn.DataParallel(model)
 model.cuda()
 
-loss_crs = ClsLoss(ignore_index=0, reduction='mean')
+# loss_crs = ClsLoss(ignore_index=0, reduction='mean')
+loss_crs = nn.CrossEntropyLoss(ignore_index=0, reduction='mean').cuda()
 
 # lossHuber = nn.SmoothL1Loss(reduction = "mean").cuda()
 # loss_spatial = SpatialSmoothLoss().cuda()
 # loss_maskedcrs = MaskedCrsLoss().cuda()
-# loss_crs = nn.CrossEntropyLoss(ignore_index=0, reduction='mean').cuda()
+
 
 
 # optimizer = torch.optim.SGD(model.parameters(), lr=cfg.base_lr, momentum=cfg.momentum, weight_decay=cfg.weight_decay)
@@ -128,7 +130,6 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', fa
                                                        threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0,
                                                        eps=1e-08)
 
-
 # ---------------------------------------------------------------------------- #
 # Train
 # ---------------------------------------------------------------------------- #
@@ -142,7 +143,6 @@ def train(epoch):
         data_time.update(time.time() - start)
         batch_size = data.shape[0]  # Batch size
         pts_num = data.shape[1]  # Num of points in PointCloud
-
         voxels = [];
         coors = [];
         num_points = [];
@@ -150,7 +150,6 @@ def train(epoch):
         data = data.numpy()
         for i in range(batch_size):
             v, c, n = points_to_voxel(data[i], cfg.voxel_size, cfg.pc_range, cfg.max_points_voxel, True, cfg.max_voxels)
-            #这部分改造到gpu去？
             c = torch.from_numpy(c)
             c = F.pad(c, (1, 0), 'constant', i) # 为什么pad填的是i？
             coors.append(c)
@@ -165,11 +164,11 @@ def train(epoch):
         optimizer.zero_grad()
         # output_cls,output_nor = model(voxels, num_points, coors)
         output_cls = model(voxels, num_points, coors)
-
         # output: torch.Size([32, 3, 128, 128])
         # labels: torch.Size([32, 128, 128])
 
-        loss = loss_crs.FocalLoss(output_cls,labels,gamma=2, alpha=0.5)
+        # loss = loss_crs.FocalLoss(output_cls,labels,gamma=2, alpha=0.5)
+        loss = loss_crs(output_cls, labels.long())
 
         # loss=loss_mlm(output,labels.long())
         # loss=lossHuber(output,labels.long())
@@ -231,8 +230,8 @@ def validate():
 
             output_cls = model(voxels, num_points, coors)
 
-
-            loss = loss_crs.FocalLoss(output_cls,labels,gamma=2, alpha=0.5)
+            # loss = loss_crs.FocalLoss(output_cls,labels,gamma=2, alpha=0.5)
+            loss = loss_crs(output_cls, labels.long())
 
             # loss_mbce=loss_maskedcrs(output,labels,masks)
             # loss_spat=loss_spatial(output)

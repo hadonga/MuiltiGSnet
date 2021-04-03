@@ -3,7 +3,6 @@ PointPillars  from SECOND.
 Code written by Alex Lang and Oscar Beijbom, 2018.
 Licensed under MIT License [see LICENSE].
 """
-
 '''
 2021.1.5 
 模型整体结构
@@ -18,7 +17,6 @@ Licensed under MIT License [see LICENSE].
 
 import numpy as np
 import sys
-sys.path.append("..") # Adds higher directory to python old_modules path.
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -26,15 +24,11 @@ from torch.nn import functional as F
 from torchplus.nn import Empty
 from torchplus.tools import change_default_args
 
-from old_modules.segnet import segnetGndEst
-from network import AttU_Net, U_Net, Mlp, NestedUNet, New_net, SmaAt_UNet # NestedUNet就是 Unet++
-
-# 为了更好理解而进行少量修改
+from network import AttU_Net, U_Net, Mlp, NestedUNet, New_net, DS_Unet, TransDSUnet_lite
 
 # ---------------------------------------------------------------------------- #
-#  pointpillar部分加入 model进行更好的管理，并预备按照 mit论文进行修改。
+#  pointpillar部分加入 model进行更好的管理，并预备按照 mit论文进行修改。 # 为了更好理解而进行少量修改
 # ---------------------------------------------------------------------------- #
-
 def get_paddings_indicator(actual_num, max_num, axis=0):
     """Create boolean mask by actually number of a padded tensor.
 
@@ -217,11 +211,44 @@ class PointPillarsScatter(nn.Module):
         return batch_canvas
 
 # ---------------------------------------------------------------------------- #
-# DW_net : 4.04M
+# trans_DSUNnet
 # ---------------------------------------------------------------------------- #
-class Our_DW_UNet(nn.Module):
+class Our_trans_DSUNet(nn.Module):
     def __init__(self, cfg):
-        super(Our_DW_UNet, self).__init__()
+        super(Our_trans_DSUNet, self).__init__()
+        self.cfg = cfg
+        self.voxel_feature_extractor = PillarFeatureNet(num_input_features = cfg.input_features,
+        # self.voxel_feature_extractor = PillarFeatureNetRadius(num_input_features = cfg.input_features,
+                use_norm = cfg.use_norm,
+                num_filters=cfg.vfe_filters,
+                with_distance=cfg.with_distance,
+                voxel_size=cfg.voxel_size,
+                pc_range=cfg.pc_range)
+            #voxel_feature_extractor:20000X64
+        grid_size = (np.asarray(cfg.pc_range[3:]) - np.asarray(cfg.pc_range[:3])) / np.asarray(cfg.voxel_size)
+        grid_size = np.round(grid_size).astype(np.int64) #grid_size:128X128X1(100X100X1)
+        dense_shape = [1] + grid_size[::-1].tolist() + [cfg.vfe_filters[-1]] #grid_size[::-1] reverses the index from xyz to zyx
+        #dense_shape:[1, 1, 128, 128, 64]
+        # 得到pseudo image: middle_feature_extractor:1x64x128x128
+        self.middle_feature_extractor = PointPillarsScatter(output_shape = dense_shape, num_input_features = cfg.vfe_filters[-1])
+        # self.feature_mlp = Mlp()  # bs*128*128*64 -> bs*128*128*3 and bs*128*128*3
+        self.encoder_decoder = TransDSUnet_lite(64,3) # bs*128*128*64 -> bs*128*128*3
+        # self.encoder_decoder = segnetGndEst(in_channels=64, is_unpooling=True)
+        #pred- 16x4x128x128
+
+    def forward(self, voxels, num_points, coors):
+        voxel_features = self.voxel_feature_extractor(voxels, num_points, coors)
+        spatial_features = self.middle_feature_extractor(voxel_features, coors, self.cfg.batch_size)
+        # pred_cls,pred_nor= self.feature_mlp(spatial_features)
+        pred = self.encoder_decoder(spatial_features)
+        return torch.squeeze(pred)  # gnd_pred : batchsize x 3 x 128 x 128
+
+# ---------------------------------------------------------------------------- #
+# DS_Unet : 0.27M
+# ---------------------------------------------------------------------------- #
+class Our_DS_UNet(nn.Module):
+    def __init__(self, cfg):
+        super(Our_DS_UNet, self).__init__()
         self.cfg = cfg
         self.voxel_feature_extractor = PillarFeatureNet(num_input_features = cfg.input_features,
         # self.voxel_feature_extractor = PillarFeatureNetRadius(num_input_features = cfg.input_features,
@@ -239,7 +266,7 @@ class Our_DW_UNet(nn.Module):
         self.middle_feature_extractor = PointPillarsScatter(output_shape = dense_shape, num_input_features = cfg.vfe_filters[-1])
 
         # self.feature_mlp = Mlp()  # bs*128*128*64 -> bs*128*128*3 and bs*128*128*3
-        self.encoder_decoder = SmaAt_UNet(64,3) # bs*128*128*64 -> bs*128*128*3
+        self.encoder_decoder = DS_Unet(64,3) # bs*128*128*64 -> bs*128*128*3
         # self.encoder_decoder = segnetGndEst(in_channels=64, is_unpooling=True)
         #pred- 16x4x128x128
 
@@ -291,7 +318,6 @@ class Our_New_Net(nn.Module):
 # ---------------------------------------------------------------------------- #
 # mlp : 0.4M
 # ---------------------------------------------------------------------------- #
-
 class Our_MLP(nn.Module):
     def __init__(self, cfg):
         super(Our_MLP, self).__init__()
@@ -323,7 +349,8 @@ class Our_MLP(nn.Module):
         pred_cls,pred_nor= self.feature_mlp(spatial_features)
         # pred = self.encoder_decoder(spatial_features)
 
-        return torch.squeeze(pred_cls),torch.squeeze(pred_nor)  # gnd_pred : 3 x128x128
+        return torch.squeeze(pred_cls),torch.squeeze(pred_nor)
+        # gnd_pred : 3 x128x128
 
 # ---------------------------------------------------------------------------- #
 # Unet : 34.56M
@@ -360,6 +387,7 @@ class Our_UNet(nn.Module):
         pred = self.encoder_decoder(spatial_features)
 
         return torch.squeeze(pred)  # gnd_pred : 3 x128x128
+
 # ---------------------------------------------------------------------------- #
 # Our_AUNet : 34.91M
 # ---------------------------------------------------------------------------- #
@@ -385,13 +413,13 @@ class Our_AUNet(nn.Module):
 
         self.encoder_decoder = AttU_Net() # output: 3x 128x128
         # pred- 16x4x128x128
-
     def forward(self, voxels, num_points, coors):
         voxel_features = self.voxel_feature_extractor(voxels, num_points, coors)
         spatial_features = self.middle_feature_extractor(voxel_features, coors, self.cfg.batch_size)
         pred = self.encoder_decoder(spatial_features)
         return torch.squeeze(pred)
         # 3x128x128
+
 # ---------------------------------------------------------------------------- #
 # Our_UNet_2plus : 36.67M
 # ---------------------------------------------------------------------------- #
@@ -413,7 +441,6 @@ class Our_UNet_2plus(nn.Module):
         #dense_shape:[1, 1, 128, 128, 64]
         # 得到pseudo image: middle_feature_extractor:1x64x128x128
         self.middle_feature_extractor = PointPillarsScatter(output_shape = dense_shape, num_input_features = cfg.vfe_filters[-1])
-
         # self.feature_mlp = Mlp()  # bs*128*128*64 -> bs*128*128*3 and bs*128*128*3
         self.encoder_decoder = NestedUNet() # bs*128*128*64 -> bs*128*128*3
         # self.encoder_decoder = segnetGndEst(in_channels=64, is_unpooling=True)
@@ -422,8 +449,6 @@ class Our_UNet_2plus(nn.Module):
     def forward(self, voxels, num_points, coors):
         voxel_features = self.voxel_feature_extractor(voxels, num_points, coors)
         spatial_features = self.middle_feature_extractor(voxel_features, coors, self.cfg.batch_size)
-
         # pred_cls,pred_nor= self.feature_mlp(spatial_features)
         pred = self.encoder_decoder(spatial_features)
-
         return torch.squeeze(pred)  # gnd_pred : 3 x128x128

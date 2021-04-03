@@ -4,6 +4,8 @@
 root_dir: '/root/dataset/sequences/'
 checkpoints_path: "/root/dataset/checkpoints/"
 evaluation_path: "/root/dataset/evaluation/"
+
+
 shift_cloud: true
 lidar_height: 1.733
 num_points: 100000  # max points in a pillar
@@ -40,7 +42,7 @@ with_distance: false
 batch_size: 24 #设置输入模型的batch size
 epochs: 25
 use_norm: true  
-num_gpus: 2
+num_gpus: 1
 evaluate : false
 save_checkpoints : true
 base_lr: 0.003 #refer to mit paper

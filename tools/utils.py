@@ -3,7 +3,6 @@ import time
 import numba
 import numpy as np
 
-
 @numba.jit(nopython=True)
 def _points_to_voxel_reverse_kernel(points,
                                     voxel_size,

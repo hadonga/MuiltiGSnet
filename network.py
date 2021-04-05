@@ -48,9 +48,9 @@ def get_net_config():
     """Returns the ViT-B/16 configuration."""
     config = ml_collections.ConfigDict()
     config.patches = ml_collections.ConfigDict({'size': (16, 16)})
-    config.hidden_size = 3072  # 768
+    config.hidden_size = 768 #3072  # 768
     config.transformer = ml_collections.ConfigDict()
-    config.transformer.mlp_dim = 12288  # 3072
+    config.transformer.mlp_dim = 3072 #12288  # 3072
     config.transformer.num_heads = 12
     config.transformer.num_layers = 12
     config.transformer.attention_dropout_rate = 0.0
@@ -118,7 +118,6 @@ class Attention(nn.Module):
         attention_output = self.proj_dropout(attention_output)
         return attention_output, weights
 
-
 class Mlp(nn.Module):
     def __init__(self, config):
         super(Mlp, self).__init__()
@@ -146,26 +145,28 @@ class Mlp(nn.Module):
 class Embeddings(nn.Module):
     """Construct the embeddings from patch, position embeddings.
     """
-    def __init__(self, config, img_size, in_channels=256):  # img_size= 32,32  in_channels=256
+    def __init__(self, config, img_size, in_channels=512):  # img_size= 8  in_channels=512
         super(Embeddings, self).__init__()
         self.hybrid = None
         self.config = config
-        img_size = _pair(img_size)
-
+        img_size = _pair(img_size)  #(8,8)
         patch_size = (1, 1)
-        n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])  # (256)
-
-        self.patch_embeddings = Conv2d(in_channels=in_channels,  # 256
-                                       out_channels=config.hidden_size,  # 3072
+        n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])  # (8*8=64)
+        self.patch_embeddings = Conv2d(in_channels=in_channels,  # 512
+                                       out_channels=config.hidden_size,  #768 # 3072
                                        kernel_size=patch_size,  # (1,1)
                                        stride=patch_size)  # (1,1)
-        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches, config.hidden_size))  # (1,256,3072)
+        self.position_embeddings = nn.Parameter(torch.zeros(24, n_patches, config.hidden_size))  # (24,64,3072)
         self.dropout = Dropout(config.transformer["dropout_rate"])
 
-    def forward(self, x):  # x3:(B,256,16,16)
-        x = self.patch_embeddings(x)  # (B, 3072,16,16)
+    def forward(self, x):  # (B,512,8,8)
+        x = self.patch_embeddings(x)  # in:(B,512,8,8)  out:(B, 768,8,8)
+        print("checkpoint - x1 size: ", x.size())
         x = x.flatten(2)  # (B,3072,256)
         x = x.transpose(-1, -2)  # (B, n_patches, hidden)   # (B,256,3072)
+        print("checkpoint - x2 size: ", x.size())
+        b= self.position_embeddings
+        print("checkpoint - b size: ", b.size())
         embeddings = x + self.position_embeddings  # (B,256,3072)
         embeddings = self.dropout(embeddings)
 
@@ -217,13 +218,13 @@ class Encoder(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, config, img_size):  # vis:?
+    def __init__(self, config, img_size):
         super(Transformer, self).__init__()
         self.embeddings = Embeddings(config, img_size=img_size)
         self.encoder = Encoder(config)
 
-    def forward(self, input_ids):  # 入口 x3 input: (B,256,32,32)
-        embedding_output = self.embeddings(input_ids)  # input_ids：(B,64,128,128) ; embedding_output= (B, 64, 768)
+    def forward(self, input_ids):  # 入口: (B,512,8,8)
+        embedding_output = self.embeddings(input_ids)  #  embedding_output= (B, 64, 768)
         encoded = self.encoder(embedding_output)  #  (B,256,16,16)
         # encoded = encoded.transpose(-1, -2)
         return encoded
@@ -399,24 +400,22 @@ class TransDSUnet_lite(nn.Module):
                                 kernels_per_layer=kernels_per_layer)  # (64,128,128) -> (64,128,128)
         self.cbam1 = CBAM(64, reduction_ratio=reduction_ratio)
         self.down1 = DownDS(64, 128, kernels_per_layer=kernels_per_layer)  # (64,128,128)-> (128,64,64)
-
         self.cbam2 = CBAM(128, reduction_ratio=reduction_ratio)
-
         self.down2 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)  # (128,64,64)-> (256,32,32)
         self.cbam3 = CBAM(256, reduction_ratio=reduction_ratio)
+        self.down3 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)  # (256,32,32)-> (512,16,16)
+        self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio) #(512,16,16)
 
         factor = 2 if self.bilinear else 1
-        self.down3 = DownDS(256, 512 // factor, kernels_per_layer=kernels_per_layer)  # (256,32,32)-> (256,16,16)
-        # self.cbam4 = CBAM(512 //factor, reduction_ratio=reduction_ratio)#(256,16,16)
-        # Trans_input: (256,16,16)
-        self.trans = Transformer(config=trans_config, img_size=16)  # out:(768,16,16)->(256,16,16)
+        self.down4 = DownDS(512, 1024 // factor, kernels_per_layer=kernels_per_layer)  # (512,16,16)-> (512,8,8)
+        self.trans = Transformer(config=trans_config, img_size=8)  # out:(768,8,8)->(512,8,8)
 
+        self.up1 = UpDS(1024, 512 // factor, self.bilinear, kernels_per_layer=kernels_per_layer) # (1024,8,8) -> (256,16,16)
         self.up2 = UpDS(512, 256 // factor, self.bilinear,
                         kernels_per_layer=kernels_per_layer)  # (512,16,16) -> (128,32,32)
         self.up3 = UpDS(256, 128 // factor, self.bilinear,
                         kernels_per_layer=kernels_per_layer)  # (256,32,32) -> (128,64,64)
         self.up4 = UpDS(128, 64, self.bilinear, kernels_per_layer=kernels_per_layer)  # (128,64,64) -> (64,128,128)
-
         self.outc = OutConv(64, self.n_classes)  # (64,128,128)->(3,128,128)
 
     def forward(self, x):
@@ -425,12 +424,15 @@ class TransDSUnet_lite(nn.Module):
         x2 = self.down1(x1)
         x2Att = self.cbam2(x2)  # x2 : (128,64,64)
         x3 = self.down2(x2)  # x3：（256，32，32）
+        x3Att = self.cbam3(x3)  # x2 : (128,64,64)
+        x4 = self.down3(x3)  # x3：（256，32，32）
+        x4Att = self.cbam3(x4)  # x2 : (128,64,64)
+        x5 = self.down3(x4)  # x3：（256，32，32）
+        x5Trans = self.cbam5(x5)
 
-        # x3Att = self.cbam3(x3) ## 这步att变为 trans
-        x3Trans = self.trans(x3)  # 32
-        # upsample 32->64
-
-        x = self.up3(x3Trans, x2Att)  # (128,64,64) + (128,64,64)
+        x = self.up1(x5Trans, x4Att)
+        x = self.up2(x, x3Att)
+        x = self.up3(x, x2Att)
         x = self.up4(x, x1Att)
         logits = self.outc(x)
         return logits

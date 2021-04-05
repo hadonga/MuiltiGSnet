@@ -47,7 +47,7 @@ ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu}
 def get_net_config():
     """Returns the ViT-B/16 configuration."""
     config = ml_collections.ConfigDict()
-    config.patches = ml_collections.ConfigDict({'size': (16, 16)})
+    # config.patches = ml_collections.ConfigDict({'size': (16, 16)})
     config.hidden_size = 768 #3072  # 768
     config.transformer = ml_collections.ConfigDict()
     config.transformer.mlp_dim = 3072 #12288  # 3072
@@ -60,7 +60,7 @@ def get_net_config():
     config.representation_size = None
     config.resnet_pretrained_path = None
     config.pretrained_path = '../model/vit_checkpoint/imagenet21k/ViT-B_16.npz'
-    config.patch_size = 16
+    # config.patch_size = 16
 
     config.decoder_channels = (256, 128, 64, 16)
     config.n_classes = 2
@@ -142,37 +142,6 @@ class Mlp(nn.Module):
         x = self.dropout(x)
         return x
 
-class Embeddings(nn.Module):
-    """Construct the embeddings from patch, position embeddings.
-    """
-    def __init__(self, config, img_size, in_channels=512):  # img_size= 8  in_channels=512
-        super(Embeddings, self).__init__()
-        self.hybrid = None
-        self.config = config
-        img_size = _pair(img_size)  #(8,8)
-        patch_size = (1, 1)
-        n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])  # (8*8=64)
-        self.patch_embeddings = Conv2d(in_channels=in_channels,  # 512
-                                       out_channels=config.hidden_size,  #768 # 3072
-                                       kernel_size=patch_size,  # (1,1)
-                                       stride=patch_size)  # (1,1)
-        self.position_embeddings = nn.Parameter(torch.zeros(24, n_patches, config.hidden_size))  # (24,64,3072)
-        self.dropout = Dropout(config.transformer["dropout_rate"])
-
-    def forward(self, x):  # (B,512,8,8)
-        x = self.patch_embeddings(x)  # in:(B,512,8,8)  out:(B, 768,8,8)
-        print("checkpoint - x1 size: ", x.size())
-        x = x.flatten(2)  # (B,3072,256)
-        x = x.transpose(-1, -2)  # (B, n_patches, hidden)   # (B,256,3072)
-        print("checkpoint - x2 size: ", x.size())
-        b= self.position_embeddings
-        print("checkpoint - b size: ", b.size())
-        embeddings = x + self.position_embeddings  # (B,256,3072)
-        embeddings = self.dropout(embeddings)
-
-        return embeddings  #
-
-
 class Block(nn.Module):
     def __init__(self, config):
         super(Block, self).__init__()
@@ -194,38 +163,66 @@ class Block(nn.Module):
         x = x + h
         return x
 
+class Embeddings(nn.Module):
+    """Construct the embeddings from patch, position embeddings.
+    """
+    def __init__(self, config, img_size=8, in_channels=512):  # img_size= 8  in_channels=512
+        super(Embeddings, self).__init__()
+        self.hybrid = None
+        self.config = config
+        img_size = _pair(img_size)  #(8,8)
+        patch_size = (1, 1)
+        n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])  # (8*8=64)
+        self.patch_embeddings = Conv2d(in_channels=in_channels,  # 512   512* 3072 这部分的参数量较多
+                                       out_channels=config.hidden_size,  #768 # 3072
+                                       kernel_size=patch_size,  # (1,1)
+                                       stride=patch_size)  # (1,1)
+        self.position_embeddings = nn.Parameter(torch.zeros(24, n_patches, config.hidden_size))  # (24,64,768)
+        self.dropout = Dropout(config.transformer["dropout_rate"])
+
+    def forward(self, x):  # (B,512,8,8)
+        x = self.patch_embeddings(x)  # in:(B,512,8,8)  out:(B, 768,8,8)  使用一次 cnn
+        print("checkpoint - x1 size: ", x.size())
+        x = x.flatten(2)  # (B,768,64)
+        x = x.transpose(-1, -2)  # (B, n_patches, hidden)   # (B,64,768)
+        print("checkpoint - x2 size: ", x.size())
+        b= self.position_embeddings
+        print("checkpoint - b size: ", b.size())
+        embeddings = x + self.position_embeddings  # (B,64,768)  为为啥要加只是zeros的一个矩阵？ 并没有位置信息。
+        embeddings = self.dropout(embeddings)
+        return embeddings  #
 
 class Encoder(nn.Module):
     def __init__(self, config):
         super(Encoder, self).__init__()
         self.layer = nn.ModuleList()  # 生成空list并注册到网络
         self.encoder_norm = LayerNorm(config.hidden_size, eps=1e-6)  # 3072
-        self.conv = nn.Conv2d(in_channels=3072, out_channels = 256, kernel_size = 1)  # 3072->256
+        self.conv = nn.Conv2d(in_channels=3072, out_channels = 256, kernel_size = 1)  # 3072->256  HW的参数没对齐？
         for _ in range(config.transformer["num_layers"]):  # 12 transformer的层
-            layer = Block(config)
+            layer = Block(config) #
             self.layer.append(copy.deepcopy(layer))
 
-    def forward(self, hidden_states):  # (B, 256,3072)
-        for layer_block in self.layer:  # list[12]
-            hidden_states = layer_block(hidden_states)  # 12
+    def forward(self, hidden_states):  # hidden_states= (B,64,768)
+        for layer_block in self.layer:  # list[12] 12条路线
+            hidden_states = layer_block(hidden_states)  # （B，64，768）放入 12条线路处理，输出为：
         encoded = self.encoder_norm(hidden_states)
-        B, n_patch, hidden = encoded.size()  # (B,256,3072)  # reshape from (B, n_patch, hidden) to (B, h, w, hidden)
-        h, w = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))
+        B, n_patch, hidden = encoded.size()  # (B,64,？)  # reshape from (B, n_patch, hidden) to (B, h, w, hidden)
+        h, w = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))  # n_patch=64
         x = encoded.permute(0, 2, 1)
-        x = x.contiguous().view(B, hidden, h, w)
+        x = x.contiguous().view(B, hidden, h, w) # (B,?,8,8)
         x = self.conv(x)
-        return x  # (B,256,16,16)
+        return x  # ??? 需要的输出是 B，512，16，16
 
 
 class Transformer(nn.Module):
     def __init__(self, config, img_size):
         super(Transformer, self).__init__()
-        self.embeddings = Embeddings(config, img_size=img_size)
+        self.embeddings = Embeddings(config, img_size=img_size)  # img_size=8
         self.encoder = Encoder(config)
 
     def forward(self, input_ids):  # 入口: (B,512,8,8)
         embedding_output = self.embeddings(input_ids)  #  embedding_output= (B, 64, 768)
-        encoded = self.encoder(embedding_output)  #  (B,256,16,16)
+        encoded = self.encoder(embedding_output)  #  output= (B,256,16,16)
         # encoded = encoded.transpose(-1, -2)
         return encoded
 
@@ -408,7 +405,7 @@ class TransDSUnet_lite(nn.Module):
 
         factor = 2 if self.bilinear else 1
         self.down4 = DownDS(512, 1024 // factor, kernels_per_layer=kernels_per_layer)  # (512,16,16)-> (512,8,8)
-        self.trans = Transformer(config=trans_config, img_size=8)  # out:(768,8,8)->(512,8,8)
+        self.trans = Transformer(config=trans_config, img_size=8)  # out:(512,16,16)
 
         self.up1 = UpDS(1024, 512 // factor, self.bilinear, kernels_per_layer=kernels_per_layer) # (1024,8,8) -> (256,16,16)
         self.up2 = UpDS(512, 256 // factor, self.bilinear,
@@ -419,16 +416,16 @@ class TransDSUnet_lite(nn.Module):
         self.outc = OutConv(64, self.n_classes)  # (64,128,128)->(3,128,128)
 
     def forward(self, x):
-        x1 = self.inc(x)
-        x1Att = self.cbam1(x1)  # x1: (64,128,128)
-        x2 = self.down1(x1)
-        x2Att = self.cbam2(x2)  # x2 : (128,64,64)
-        x3 = self.down2(x2)  # x3：（256，32，32）
-        x3Att = self.cbam3(x3)  # x2 : (128,64,64)
-        x4 = self.down3(x3)  # x3：（256，32，32）
-        x4Att = self.cbam3(x4)  # x2 : (128,64,64)
-        x5 = self.down3(x4)  # x3：（256，32，32）
-        x5Trans = self.cbam5(x5)
+        x1 = self.inc(x) # x1: (64,128,128)
+        x1Att = self.cbam1(x1)
+        x2 = self.down1(x1) # x2 : (128,64,64)
+        x2Att = self.cbam2(x2)
+        x3 = self.down2(x2)  # x3 : (256,32,32)
+        x3Att = self.cbam3(x3)
+        x4 = self.down3(x3)  # x4 : (512,16,16)
+        x4Att = self.cbam3(x4)
+        x5 = self.down3(x4)  # x5：（512，8，8）
+        x5Trans = self.cbam5(x5) # trans:(512,16,16)
 
         x = self.up1(x5Trans, x4Att)
         x = self.up2(x, x3Att)

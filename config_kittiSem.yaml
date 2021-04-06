@@ -1,9 +1,9 @@
 # DATASET & Model
 #data_dir: '/home/lion/dataset/semantic_kitti/dataset/sequences/'
 
-root_dir: '/root/dataset/sequences/'
-checkpoints_path: "/root/dataset/checkpoints/"
-evaluation_path: "/root/dataset/evaluation/"
+root_dir: '/root/dataset/kitti/sequences/'
+checkpoints_path: "/root/dataset/kitti/checkpoints/"
+evaluation_path: "/root/dataset/kitti/evaluation/"
 
 
 shift_cloud: true
@@ -59,7 +59,7 @@ beta: 0.1 # Smoothness loss
 
 # RESULT DISPLAY
 #model_name: "unet_kitti3"
-model_name: "DW_unet_kitti3"
+model_name: "Trans_DSUnet_kitti3"
 print_freq: 20
 physical_sampling: true
 

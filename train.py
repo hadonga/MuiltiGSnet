@@ -22,7 +22,7 @@ import shutil
 
 from dataset_loader import kitti_loader
 # from gdn_dataset import kitti_gnd
-from model import Our_trans_DSUNet
+from model import Our_trans_DSUNet,Our_AUNet,Our_UNet
 from tools.utils import points_to_voxel
 
 # ---------------------------------------------------------------------------- #
@@ -94,7 +94,7 @@ test_dataset = kitti_loader(data_dir=cfg.root_dir, point_cloud_files= cfg.point_
 test_dataloader = DataLoader(test_dataset, batch_size=cfg.batch_size * cfg.num_gpus, shuffle=False,
                              num_workers=cfg.num_workers, pin_memory=True, drop_last=True)
 
-# model = Our_AUNet(cfg)
+# model = Our_UNet(cfg)
 # model = Our_DS_UNet(cfg)
 model = Our_trans_DSUNet(cfg)
 print("Model has {} paramerters in total".format(sum(x.numel() for x in model.parameters())))

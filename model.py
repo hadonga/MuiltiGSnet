@@ -24,7 +24,7 @@ from torch.nn import functional as F
 from torchplus.nn import Empty
 from torchplus.tools import change_default_args
 
-from network import AttU_Net, U_Net, Mlp, NestedUNet, New_net, DS_Unet, TransDSUnet_lite
+from network import TransDSUnet_lite #,AttU_Net, U_Net, Mlp, NestedUNet, New_net, DS_Unet,
 
 # ---------------------------------------------------------------------------- #
 #  pointpillar部分加入 model进行更好的管理，并预备按照 mit论文进行修改。 # 为了更好理解而进行少量修改

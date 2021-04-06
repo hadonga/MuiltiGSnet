@@ -48,11 +48,11 @@ def get_net_config():
     """Returns the ViT-B/16 configuration."""
     config = ml_collections.ConfigDict()
     # config.patches = ml_collections.ConfigDict({'size': (16, 16)})
-    config.hidden_size = 768 #3072  # 768
+    config.hidden_size = 384# 768 #3072  # 768
     config.transformer = ml_collections.ConfigDict()
     config.transformer.mlp_dim = 3072 #12288  # 3072
-    config.transformer.num_heads = 12
-    config.transformer.num_layers = 12
+    config.transformer.num_heads = 6
+    config.transformer.num_layers = 6
     config.transformer.attention_dropout_rate = 0.0
     config.transformer.dropout_rate = 0.1
 
@@ -63,7 +63,7 @@ def get_net_config():
     # config.patch_size = 16
 
     config.decoder_channels = (256, 128, 64, 16)
-    config.n_classes = 2
+    config.n_classes = 3
     config.activation = 'softmax'
     return config
 
@@ -151,7 +151,7 @@ class Block(nn.Module):
         self.ffn = Mlp(config)
         self.attn = Attention(config)
 
-    def forward(self, x):
+    def forward(self, x):  #（B，64，768）
         h = x
         x = self.attention_norm(x)
         x, weights = self.attn(x)
@@ -161,7 +161,7 @@ class Block(nn.Module):
         x = self.ffn_norm(x)
         x = self.ffn(x)
         x = x + h
-        return x
+        return x #（B，64，768）
 
 class Embeddings(nn.Module):
     """Construct the embeddings from patch, position embeddings.
@@ -177,7 +177,7 @@ class Embeddings(nn.Module):
                                        out_channels=config.hidden_size,  #768 # 3072
                                        kernel_size=patch_size,  # (1,1)
                                        stride=patch_size)  # (1,1)
-        self.position_embeddings = nn.Parameter(torch.zeros(24, n_patches, config.hidden_size))  # (24,64,768)
+        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches, config.hidden_size))  # (24,64,768)
         self.dropout = Dropout(config.transformer["dropout_rate"])
 
     def forward(self, x):  # (B,512,8,8)
@@ -197,21 +197,23 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.layer = nn.ModuleList()  # 生成空list并注册到网络
         self.encoder_norm = LayerNorm(config.hidden_size, eps=1e-6)  # 3072
-        self.conv = nn.Conv2d(in_channels=3072, out_channels = 256, kernel_size = 1)  # 3072->256  HW的参数没对齐？
+        self.conv = nn.Conv2d(in_channels=768, out_channels = 256, kernel_size = 1)  # 3072->256 ,但是HW的参数没对齐？
+        self.up=nn.UpsamplingBilinear2d(scale_factor=2)
         for _ in range(config.transformer["num_layers"]):  # 12 transformer的层
-            layer = Block(config) #
+            layer = Block(config) ##（B，64，768）
             self.layer.append(copy.deepcopy(layer))
 
     def forward(self, hidden_states):  # hidden_states= (B,64,768)
         for layer_block in self.layer:  # list[12] 12条路线
-            hidden_states = layer_block(hidden_states)  # （B，64，768）放入 12条线路处理，输出为：
+            hidden_states = layer_block(hidden_states)  # （B，64，768）放入 12条线路处理，输出为：#（B，64，768）
         encoded = self.encoder_norm(hidden_states)
-        B, n_patch, hidden = encoded.size()  # (B,64,？)  # reshape from (B, n_patch, hidden) to (B, h, w, hidden)
+        B, n_patch, hidden = encoded.size()  # (B,64,768)  # reshape from (B, n_patch, hidden) to (B, h, w, hidden)
         h, w = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))  # n_patch=64
         x = encoded.permute(0, 2, 1)
-        x = x.contiguous().view(B, hidden, h, w) # (B,?,8,8)
-        x = self.conv(x)
-        return x  # ??? 需要的输出是 B，512，16，16
+        x = x.contiguous().view(B, hidden, h, w) # (B,768,8,8)
+        x = self.conv(x) #（B，768，8，8） ??? 需要的输出是 B，512，16，16 论文中使用了 upsampling
+        x = self.up(x) #(B,512,16,16)
+        return x
 
 
 class Transformer(nn.Module):
@@ -222,8 +224,7 @@ class Transformer(nn.Module):
 
     def forward(self, input_ids):  # 入口: (B,512,8,8)
         embedding_output = self.embeddings(input_ids)  #  embedding_output= (B, 64, 768)
-        encoded = self.encoder(embedding_output)  #  output= (B,256,16,16)
-        # encoded = encoded.transpose(-1, -2)
+        encoded = self.encoder(embedding_output)  #  output= (B,256,8,8)
         return encoded
 
 # DSC Module
@@ -234,7 +235,6 @@ class OutConv(nn.Module):  # 一般的1x1conv2d.
 
     def forward(self, x):
         return self.conv(x)
-
 
 class DepthwiseSeparableConv(nn.Module):  # DSC
     def __init__(self, in_channels, output_channels, kernel_size, padding=0, kernels_per_layer=1):

@@ -1,10 +1,14 @@
-# DATASET & Model
+# DATASET & LOADER
 #data_dir: '/home/lion/dataset/semantic_kitti/dataset/sequences/'
 
-root_dir: '/root/dataset/kitti/sequences/'
-checkpoints_path: "/root/dataset/kitti/checkpoints/"
-evaluation_path: "/root/dataset/kitti/evaluation/"
+#root_dir: '/root/dataset/kitti/sequences/'
+#checkpoints_path: "/root/dataset/kitti/checkpoints/"
+#evaluation_path: "/root/dataset/kitti/evaluation/"
 
+#uneven2
+root_dir: '/root/dataset/uneven2/sequences/'
+checkpoints_path: "/root/dataset/uneven2/checkpoints/"
+evaluation_path: "/root/dataset/uneven2/evaluation/"
 
 shift_cloud: true
 lidar_height: 1.733
@@ -12,18 +16,8 @@ num_points: 100000  # max points in a pillar
 grid_range: [-51.2, -51.2, 51.2, 51.2]
 num_workers: 24
 
-# DATASET LOADER
-#data_type: "kitti_data_1"
-#point_cloud_files: "clip_n_pc"
-#labels_files: "pl_cl_lb"
-
-#data_type: "kitti_data_2"
-#point_cloud_files: "clip_n_pc"
-#labels_files: "pl_cl_lb"
-
-data_type: "kitti_data_3"
-point_cloud_files: "clip_sn_pc"
-labels_files: "pl_cl_s_lb"
+point_cloud_files: "pc_s_n"
+labels_files: "lb_s_pl"
 
 
 # VOXEL GENERATION 
@@ -39,7 +33,7 @@ vfe_filters: [64] # only one filter for now
 with_distance: false
 
 # MODEL PARAMETER
-batch_size: 24 #设置输入模型的batch size
+batch_size: 12 #设置输入模型的batch size
 epochs: 25
 use_norm: true  
 num_gpus: 1
@@ -59,7 +53,6 @@ beta: 0.1 # Smoothness loss
 
 # RESULT DISPLAY
 #model_name: "unet_kitti3"
-model_name: "Trans_DSUnet_kitti3"
 print_freq: 20
 physical_sampling: true
 

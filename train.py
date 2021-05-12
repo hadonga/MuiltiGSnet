@@ -1,16 +1,9 @@
 '''说明：
-20201230    修改optimizer, 删除argparse部分，设置全部转移到 yaml文件.
-
-20210105    修改 model部分，把Unet和 Attention Unet 合并
-            改进 checkpoint储存部分
-
-20210108    修改 worker数量防止core卡死？
-
-20210118    韩国服务器上gpu使用需要先查看。
+2021-4-7 修改
 '''
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"  # 留出前几个GPU跑其他程序, 需要在导入模型前定义
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # 留出前几个GPU跑其他程序, 需要在导入模型前定义
 import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -19,16 +12,23 @@ from tqdm import tqdm
 import yaml
 import time
 import shutil
+import argparse
 
 from dataset_loader import kitti_loader
-# from gdn_dataset import kitti_gnd
 from model import Our_trans_DSUNet,Our_AUNet,Our_UNet
 from tools.utils import points_to_voxel
+
+parser= argparse.ArgumentParser()
+parser.add_argument('-m','--model',default="Our_trans_DSUNet",
+                    help="Choose Models: Our_trans_DSUNet, Our_AUNet, Our_UNet")
+parser.add_argument('-d','--dataset_type',default="kitti_data_3")
+args = parser.parse_args()
+args.model
 
 # ---------------------------------------------------------------------------- #
 # Load config ; declare Meter class, LearningRateSchedule class, checkpointer, etc.
 # ---------------------------------------------------------------------------- #
-
+experiment_case = args.model + "_"+ args.dataset_type
 config_file = './config_kittiSem.yaml'
 
 try:
@@ -36,17 +36,16 @@ try:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
     print("using config file:", config_file)
     print('\n'.join('%s:%s' % item for item in config_dict.items()))
-
-
+    print("experiment_case:",experiment_case)
     class ConfigClass:
         def __init__(self, **entries):
             self.__dict__.update(entries)
-
-
     cfg = ConfigClass(**config_dict)
 except:
     print("Error!!! => no config file found at '{}'".format(config_file))
 
+if not os.path.exists("/root/dataset/uneven2/checkpoints/"):
+    os.mkdir("/root/dataset/uneven2/checkpoints/")
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -84,22 +83,30 @@ def getCurrentTime():
 # ---------------------------------------------------------------------------- #
 
 dataset = kitti_loader(data_dir=cfg.root_dir, point_cloud_files= cfg.point_cloud_files,
-                       data_type=cfg.data_type, labels_files= cfg.labels_files,
+                       data_type=args.dataset_type, labels_files= cfg.labels_files,
                        train=True, skip_frames=1)
 dataloader = DataLoader(dataset, batch_size=cfg.batch_size * cfg.num_gpus, shuffle=True,
                         num_workers=cfg.num_workers, pin_memory=True, drop_last=True)
 test_dataset = kitti_loader(data_dir=cfg.root_dir, point_cloud_files= cfg.point_cloud_files,
-                            data_type=cfg.data_type, labels_files= cfg.labels_files,
+                            data_type=args.dataset_type, labels_files= cfg.labels_files,
                             train=False)
 test_dataloader = DataLoader(test_dataset, batch_size=cfg.batch_size * cfg.num_gpus, shuffle=False,
                              num_workers=cfg.num_workers, pin_memory=True, drop_last=True)
 
-# model = Our_UNet(cfg)
-# model = Our_DS_UNet(cfg)
-model = Our_trans_DSUNet(cfg)
+print(args.model)
+
+model_choose=args.model
+print(model_choose)
+if model_choose == 'Our_trans_DSUNet':
+    print("inside condition")
+    model = Our_trans_DSUNet(cfg)
+elif args.model == 'Our_UNet':
+    model = Our_UNet(cfg)
+elif args.model == 'Our_AUNet':
+    model = Our_AUNet(cfg)
+
 print("Model has {} paramerters in total".format(sum(x.numel() for x in model.parameters())))
 
-# model = Our_UNet(cfg)
 if torch.cuda.device_count() > 1:
     model = nn.DataParallel(model)
 model.cuda()
@@ -278,7 +285,7 @@ def main():
                 'state_dict': model.state_dict(),
                 'lowest_loss': lowest_loss,
                 'optimizer': optimizer.state_dict(),
-            }, is_best, cfg.checkpoints_path, cfg.model_name)
+            }, is_best, cfg.checkpoints_path, experiment_case)
 
 if __name__ == '__main__':
     main()

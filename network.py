@@ -389,26 +389,27 @@ class TransDSUnet_lite(nn.Module):
         self.bilinear = bilinear
         reduction_ratio = reduction_ratio
 
-        self.inc = DoubleConvDS(self.n_channels, 64,
-                                kernels_per_layer=kernels_per_layer)  # (64,128,128) -> (64,128,128)
-        self.cbam1 = CBAM(64, reduction_ratio=reduction_ratio)
-        self.down1 = DownDS(64, 128, kernels_per_layer=kernels_per_layer)  # (64,128,128)-> (128,64,64)
-        self.cbam2 = CBAM(128, reduction_ratio=reduction_ratio)
-        self.down2 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)  # (128,64,64)-> (256,32,32)
-        self.cbam3 = CBAM(256, reduction_ratio=reduction_ratio)
-        self.down3 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)  # (256,32,32)-> (512,16,16)
+        self.inc = DoubleConvDS(self.n_channels, 128,
+                                kernels_per_layer=kernels_per_layer)  # (64,128,128) -> (128,128,128)
+        self.cbam1 = CBAM(128, reduction_ratio=reduction_ratio) # (128,128,128)
+        self.down1 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)  # (128,128,128)-> (256,64,64)
+        self.cbam2 = CBAM(256, reduction_ratio=reduction_ratio) # (256,64,64)
+        self.down2 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)  # (256,64,64)-> (512,32,32)
+        self.cbam3 = CBAM(512, reduction_ratio=reduction_ratio)
+        self.down3 = DownDS(512, 512, kernels_per_layer=kernels_per_layer)  # (512,32,32)-> (512,16,16)
         self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio) #(512,16,16)
 
-        factor = 2 if self.bilinear else 1
-        self.down4 = DownDS(512, 1024 // factor, kernels_per_layer=kernels_per_layer)  # (512,16,16)-> (512,8,8)
-        self.trans = Transformer(config=trans_config, img_size=8)  # out:(512,16,16)
+        # factor = 2 if self.bilinear else 1 # factor= 2
+        self.down4 = DownDS(512, 512, kernels_per_layer=kernels_per_layer)  # (512,16,16)-> (512,8,8)
+        self.trans = Transformer(config=trans_config, img_size=8)  # out:(512,8,8)
 
-        self.up1 = UpDS(1024, 512 // factor, self.bilinear, kernels_per_layer=kernels_per_layer) # (1024,8,8) -> (256,16,16)
-        self.up2 = UpDS(512, 256 // factor, self.bilinear,
+        self.up1 = UpDS(1024, 512, self.bilinear, kernels_per_layer=kernels_per_layer) # (1024,8,8) -> (256,16,16)
+
+        self.up2 = UpDS(1024, 256 , self.bilinear,
                         kernels_per_layer=kernels_per_layer)  # (512,16,16) -> (128,32,32)
-        self.up3 = UpDS(256, 128 // factor, self.bilinear,
-                        kernels_per_layer=kernels_per_layer)  # (256,32,32) -> (128,64,64)
-        self.up4 = UpDS(128, 64, self.bilinear, kernels_per_layer=kernels_per_layer)  # (128,64,64) -> (64,128,128)
+        self.up3 = UpDS(512, 128 , self.bilinear,
+                        kernels_per_layer=kernels_per_layer)  # (256,32,32) -> (64,64,64)
+        self.up4 = UpDS(256, 64, self.bilinear, kernels_per_layer=kernels_per_layer)  # (128,64,64) -> (64,128,128)
         self.outc = OutConv(64, self.n_classes)  # (64,128,128)->(3,128,128)
 
     def forward(self, x):
@@ -421,8 +422,8 @@ class TransDSUnet_lite(nn.Module):
         x4 = self.down3(x3)  # x4 : (512,16,16)
         # print("x4.size:",x4.size())
         x4Att = self.cbam4(x4)
-        x5 = self.down4(x4)  # x5：（512，8，8）
-        x5Trans = self.trans(x5) # trans:(512,16,16)
+        x5 = self.down4(x4)  # x5: (512,16,16)
+        x5Trans = self.trans(x5) # trans:(512,8,8)
         # print("x5Trans:",x5Trans.size())
         # print("x4Att:", x4Att.size())
 
@@ -854,115 +855,115 @@ class TransDSUnet_lite(nn.Module):
 #         return  cls_preds.permute(0,3,1,2)
 #
 #
-# # ---------------------------------------------------------------------------- #
-# # Unet
-# # ---------------------------------------------------------------------------- #
-# class conv_block(nn.Module):
-#     """
-#     Convolution Block
-#     """
-#     def __init__(self, in_ch, out_ch):
-#         super(conv_block, self).__init__()
-#         self.conv = nn.Sequential(
-#             nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
-#             nn.BatchNorm2d(out_ch),
-#             nn.ReLU(inplace=True),
-#             nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
-#             nn.BatchNorm2d(out_ch),
-#             nn.ReLU(inplace=True)
-#         )
-#
-#     def forward(self, x):
-#         x = self.conv(x)
-#         return x
-#
-# class up_conv(nn.Module):
-#     """
-#     Up Convolution Block
-#     """
-#     def __init__(self, in_ch, out_ch):
-#         super(up_conv, self).__init__()
-#         self.up = nn.Sequential(
-#             nn.Upsample(scale_factor=2),
-#             nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
-#             nn.BatchNorm2d(out_ch),
-#             nn.ReLU(inplace=True)
-#         )
-#
-#     def forward(self, x):
-#         x = self.up(x)
-#         return x
-#
-#
-# class U_Net(nn.Module):
-#     """
-#     UNet - Basic Implementation
-#     Paper : https://arxiv.org/abs/1505.04597
-#     """
-#
-#     def __init__(self, in_ch=our_in_ch, out_ch=our_out_ch):
-#         super(U_Net, self).__init__()
-#         print("Using U_Net...")
-#         # in_ch =64, out_ch= ?
-#         filters = [64, 128, 256, 512, 1024]
-#
-#         self.Maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-#         self.Maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-#         self.Maxpool3 = nn.MaxPool2d(kernel_size=2, stride=2)
-#         self.Maxpool4 = nn.MaxPool2d(kernel_size=2, stride=2)
-#
-#         self.Conv1 = conv_block(in_ch, filters[0])
-#         self.Conv2 = conv_block(filters[0], filters[1])
-#         self.Conv3 = conv_block(filters[1], filters[2])
-#         self.Conv4 = conv_block(filters[2], filters[3])
-#         self.Conv5 = conv_block(filters[3], filters[4])
-#
-#         self.Up5 = up_conv(filters[4], filters[3])
-#         self.Up_conv5 = conv_block(filters[4], filters[3])
-#
-#         self.Up4 = up_conv(filters[3], filters[2])
-#         self.Up_conv4 = conv_block(filters[3], filters[2])
-#
-#         self.Up3 = up_conv(filters[2], filters[1])
-#         self.Up_conv3 = conv_block(filters[2], filters[1])
-#
-#         self.Up2 = up_conv(filters[1], filters[0])
-#         self.Up_conv2 = conv_block(filters[1], filters[0])
-#
-#         self.Conv = nn.Conv2d(filters[0], out_ch, kernel_size=1, stride=1, padding=0)
-#
-#     # self.active = torch.nn.Sigmoid()
-#
-#     def forward(self, x):
-#         e1 = self.Conv1(x)
-#         e2 = self.Maxpool1(e1)
-#         e2 = self.Conv2(e2)
-#         e3 = self.Maxpool2(e2)
-#         e3 = self.Conv3(e3)
-#         e4 = self.Maxpool3(e3)
-#         e4 = self.Conv4(e4)
-#         e5 = self.Maxpool4(e4)
-#         e5 = self.Conv5(e5)
-#         d5 = self.Up5(e5)
-#         d5 = torch.cat((e4, d5), dim=1)
-#         d5 = self.Up_conv5(d5)
-#         d4 = self.Up4(d5)
-#         d4 = torch.cat((e3, d4), dim=1)
-#         d4 = self.Up_conv4(d4)
-#         d3 = self.Up3(d4)
-#         d3 = torch.cat((e2, d3), dim=1)
-#         d3 = self.Up_conv3(d3)
-#         d2 = self.Up2(d3)
-#         d2 = torch.cat((e1, d2), dim=1)
-#         d2 = self.Up_conv2(d2)
-#
-#         out = self.Conv(d2)
-#
-#         # d1 = self.active(out)
-#
-#         return out
-#
-#
+# ---------------------------------------------------------------------------- #
+# Unet
+# ---------------------------------------------------------------------------- #
+class conv_block(nn.Module):
+    """
+    Convolution Block
+    """
+    def __init__(self, in_ch, out_ch):
+        super(conv_block, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x
+
+class up_conv(nn.Module):
+    """
+    Up Convolution Block
+    """
+    def __init__(self, in_ch, out_ch):
+        super(up_conv, self).__init__()
+        self.up = nn.Sequential(
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        x = self.up(x)
+        return x
+
+
+class U_Net(nn.Module):
+    """
+    UNet - Basic Implementation
+    Paper : https://arxiv.org/abs/1505.04597
+    """
+
+    def __init__(self, in_ch=our_in_ch, out_ch=our_out_ch):
+        super(U_Net, self).__init__()
+        print("Using U_Net...")
+        # in_ch =64, out_ch= ?
+        filters = [64, 128, 256, 512, 1024]
+
+        self.Maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool3 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool4 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.Conv1 = conv_block(in_ch, filters[0])
+        self.Conv2 = conv_block(filters[0], filters[1])
+        self.Conv3 = conv_block(filters[1], filters[2])
+        self.Conv4 = conv_block(filters[2], filters[3])
+        self.Conv5 = conv_block(filters[3], filters[4])
+
+        self.Up5 = up_conv(filters[4], filters[3])
+        self.Up_conv5 = conv_block(filters[4], filters[3])
+
+        self.Up4 = up_conv(filters[3], filters[2])
+        self.Up_conv4 = conv_block(filters[3], filters[2])
+
+        self.Up3 = up_conv(filters[2], filters[1])
+        self.Up_conv3 = conv_block(filters[2], filters[1])
+
+        self.Up2 = up_conv(filters[1], filters[0])
+        self.Up_conv2 = conv_block(filters[1], filters[0])
+
+        self.Conv = nn.Conv2d(filters[0], out_ch, kernel_size=1, stride=1, padding=0)
+
+    # self.active = torch.nn.Sigmoid()
+
+    def forward(self, x):
+        e1 = self.Conv1(x)
+        e2 = self.Maxpool1(e1)
+        e2 = self.Conv2(e2)
+        e3 = self.Maxpool2(e2)
+        e3 = self.Conv3(e3)
+        e4 = self.Maxpool3(e3)
+        e4 = self.Conv4(e4)
+        e5 = self.Maxpool4(e4)
+        e5 = self.Conv5(e5)
+        d5 = self.Up5(e5)
+        d5 = torch.cat((e4, d5), dim=1)
+        d5 = self.Up_conv5(d5)
+        d4 = self.Up4(d5)
+        d4 = torch.cat((e3, d4), dim=1)
+        d4 = self.Up_conv4(d4)
+        d3 = self.Up3(d4)
+        d3 = torch.cat((e2, d3), dim=1)
+        d3 = self.Up_conv3(d3)
+        d2 = self.Up2(d3)
+        d2 = torch.cat((e1, d2), dim=1)
+        d2 = self.Up_conv2(d2)
+
+        out = self.Conv(d2)
+
+        # d1 = self.active(out)
+
+        return out
+
+
 # class Recurrent_block(nn.Module):
 #     """
 #     Recurrent Block for R2Unet_CNN
@@ -1091,129 +1092,129 @@ class TransDSUnet_lite(nn.Module):
 #         return out
 #
 #
-# class Attention_block(nn.Module):
-#     """
-#     Attention Block
-#     """
-#
-#     def __init__(self, F_g, F_l, F_int):
-#         super(Attention_block, self).__init__()
-#
-#         self.W_g = nn.Sequential(
-#             nn.Conv2d(F_l, F_int, kernel_size=1, stride=1, padding=0, bias=True),
-#             nn.BatchNorm2d(F_int)
-#         )
-#
-#         self.W_x = nn.Sequential(
-#             nn.Conv2d(F_g, F_int, kernel_size=1, stride=1, padding=0, bias=True),
-#             nn.BatchNorm2d(F_int)
-#         )
-#
-#         self.psi = nn.Sequential(
-#             nn.Conv2d(F_int, 1, kernel_size=1, stride=1, padding=0, bias=True),
-#             nn.BatchNorm2d(1),
-#             nn.Sigmoid()
-#         )
-#
-#         self.relu = nn.ReLU(inplace=True)
-#
-#     def forward(self, g, x):
-#         g1 = self.W_g(g)
-#         x1 = self.W_x(x)
-#         psi = self.relu(g1 + x1)
-#         psi = self.psi(psi)
-#         out = x * psi
-#         return out
-#
-#
-# class AttU_Net(nn.Module):
-#     """
-#     Attention Unet implementation
-#     Paper: https://arxiv.org/abs/1804.03999
-#     """
-#
-#     def __init__(self, img_ch=our_in_ch, output_ch=our_out_ch):
-#         super(AttU_Net, self).__init__()
-#         print("Using AttU_Net...")
-#
-#         n1 = 64
-#         filters = [n1, n1 * 2, n1 * 4, n1 * 8, n1 * 16]
-#
-#         self.Maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-#         self.Maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-#         self.Maxpool3 = nn.MaxPool2d(kernel_size=2, stride=2)
-#         self.Maxpool4 = nn.MaxPool2d(kernel_size=2, stride=2)
-#
-#         self.Conv1 = conv_block(img_ch, filters[0])
-#         self.Conv2 = conv_block(filters[0], filters[1])
-#         self.Conv3 = conv_block(filters[1], filters[2])
-#         self.Conv4 = conv_block(filters[2], filters[3])
-#         self.Conv5 = conv_block(filters[3], filters[4])
-#
-#         self.Up5 = up_conv(filters[4], filters[3])
-#         self.Att5 = Attention_block(F_g=filters[3], F_l=filters[3], F_int=filters[2])
-#         self.Up_conv5 = conv_block(filters[4], filters[3])
-#
-#         self.Up4 = up_conv(filters[3], filters[2])
-#         self.Att4 = Attention_block(F_g=filters[2], F_l=filters[2], F_int=filters[1])
-#         self.Up_conv4 = conv_block(filters[3], filters[2])
-#
-#         self.Up3 = up_conv(filters[2], filters[1])
-#         self.Att3 = Attention_block(F_g=filters[1], F_l=filters[1], F_int=filters[0])
-#         self.Up_conv3 = conv_block(filters[2], filters[1])
-#
-#         self.Up2 = up_conv(filters[1], filters[0])
-#         self.Att2 = Attention_block(F_g=filters[0], F_l=filters[0], F_int=32)
-#         self.Up_conv2 = conv_block(filters[1], filters[0])
-#
-#         self.Conv = nn.Conv2d(filters[0], output_ch, kernel_size=1, stride=1, padding=0)
-#
-#         # self.active = torch.nn.Sigmoid()
-#
-#     def forward(self, x):
-#         e1 = self.Conv1(x)
-#
-#         e2 = self.Maxpool1(e1)
-#         e2 = self.Conv2(e2)
-#
-#         e3 = self.Maxpool2(e2)
-#         e3 = self.Conv3(e3)
-#
-#         e4 = self.Maxpool3(e3)
-#         e4 = self.Conv4(e4)
-#
-#         e5 = self.Maxpool4(e4)
-#         e5 = self.Conv5(e5)
-#
-#         # print(x5.shape)
-#         d5 = self.Up5(e5)
-#         # print(d5.shape)
-#         x4 = self.Att5(g=d5, x=e4)
-#         d5 = torch.cat((x4, d5), dim=1)
-#         d5 = self.Up_conv5(d5)
-#
-#         d4 = self.Up4(d5)
-#         x3 = self.Att4(g=d4, x=e3)
-#         d4 = torch.cat((x3, d4), dim=1)
-#         d4 = self.Up_conv4(d4)
-#
-#         d3 = self.Up3(d4)
-#         x2 = self.Att3(g=d3, x=e2)
-#         d3 = torch.cat((x2, d3), dim=1)
-#         d3 = self.Up_conv3(d3)
-#
-#         d2 = self.Up2(d3)
-#         x1 = self.Att2(g=d2, x=e1)
-#         d2 = torch.cat((x1, d2), dim=1)
-#         d2 = self.Up_conv2(d2)
-#
-#         out = self.Conv(d2)
-#
-#         #  out = self.active(out)
-#
-#         return out
-#
-#
+class Attention_block(nn.Module):
+    """
+    Attention Block
+    """
+
+    def __init__(self, F_g, F_l, F_int):
+        super(Attention_block, self).__init__()
+
+        self.W_g = nn.Sequential(
+            nn.Conv2d(F_l, F_int, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.BatchNorm2d(F_int)
+        )
+
+        self.W_x = nn.Sequential(
+            nn.Conv2d(F_g, F_int, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.BatchNorm2d(F_int)
+        )
+
+        self.psi = nn.Sequential(
+            nn.Conv2d(F_int, 1, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.BatchNorm2d(1),
+            nn.Sigmoid()
+        )
+
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, g, x):
+        g1 = self.W_g(g)
+        x1 = self.W_x(x)
+        psi = self.relu(g1 + x1)
+        psi = self.psi(psi)
+        out = x * psi
+        return out
+
+
+class AttU_Net(nn.Module):
+    """
+    Attention Unet implementation
+    Paper: https://arxiv.org/abs/1804.03999
+    """
+
+    def __init__(self, img_ch=our_in_ch, output_ch=our_out_ch):
+        super(AttU_Net, self).__init__()
+        print("Using AttU_Net...")
+
+        n1 = 64
+        filters = [n1, n1 * 2, n1 * 4, n1 * 8, n1 * 16]
+
+        self.Maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool3 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.Maxpool4 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.Conv1 = conv_block(img_ch, filters[0])
+        self.Conv2 = conv_block(filters[0], filters[1])
+        self.Conv3 = conv_block(filters[1], filters[2])
+        self.Conv4 = conv_block(filters[2], filters[3])
+        self.Conv5 = conv_block(filters[3], filters[4])
+
+        self.Up5 = up_conv(filters[4], filters[3])
+        self.Att5 = Attention_block(F_g=filters[3], F_l=filters[3], F_int=filters[2])
+        self.Up_conv5 = conv_block(filters[4], filters[3])
+
+        self.Up4 = up_conv(filters[3], filters[2])
+        self.Att4 = Attention_block(F_g=filters[2], F_l=filters[2], F_int=filters[1])
+        self.Up_conv4 = conv_block(filters[3], filters[2])
+
+        self.Up3 = up_conv(filters[2], filters[1])
+        self.Att3 = Attention_block(F_g=filters[1], F_l=filters[1], F_int=filters[0])
+        self.Up_conv3 = conv_block(filters[2], filters[1])
+
+        self.Up2 = up_conv(filters[1], filters[0])
+        self.Att2 = Attention_block(F_g=filters[0], F_l=filters[0], F_int=32)
+        self.Up_conv2 = conv_block(filters[1], filters[0])
+
+        self.Conv = nn.Conv2d(filters[0], output_ch, kernel_size=1, stride=1, padding=0)
+
+        # self.active = torch.nn.Sigmoid()
+
+    def forward(self, x):
+        e1 = self.Conv1(x)
+
+        e2 = self.Maxpool1(e1)
+        e2 = self.Conv2(e2)
+
+        e3 = self.Maxpool2(e2)
+        e3 = self.Conv3(e3)
+
+        e4 = self.Maxpool3(e3)
+        e4 = self.Conv4(e4)
+
+        e5 = self.Maxpool4(e4)
+        e5 = self.Conv5(e5)
+
+        # print(x5.shape)
+        d5 = self.Up5(e5)
+        # print(d5.shape)
+        x4 = self.Att5(g=d5, x=e4)
+        d5 = torch.cat((x4, d5), dim=1)
+        d5 = self.Up_conv5(d5)
+
+        d4 = self.Up4(d5)
+        x3 = self.Att4(g=d4, x=e3)
+        d4 = torch.cat((x3, d4), dim=1)
+        d4 = self.Up_conv4(d4)
+
+        d3 = self.Up3(d4)
+        x2 = self.Att3(g=d3, x=e2)
+        d3 = torch.cat((x2, d3), dim=1)
+        d3 = self.Up_conv3(d3)
+
+        d2 = self.Up2(d3)
+        x1 = self.Att2(g=d2, x=e1)
+        d2 = torch.cat((x1, d2), dim=1)
+        d2 = self.Up_conv2(d2)
+
+        out = self.Conv(d2)
+
+        #  out = self.active(out)
+
+        return out
+
+
 # #未使用R2AttU_Net
 # class R2AttU_Net(nn.Module):
 #     """

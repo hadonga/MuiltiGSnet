@@ -36,9 +36,9 @@ class kitti_loader(Dataset):
             seq = ['00', '01', '02', '03','04','05','06','07','09','10']
             for seq_num in seq:
                 length_d = os.listdir(os.path.join(data_dir,seq_num,point_cloud_files))
-                length_d.sort(key=lambda x: int(x[:-4]))
+                length_d.sort(key=lambda x: str(x[:-4]))
                 length_l = os.listdir(os.path.join(data_dir, seq_num, labels_files))
-                length_l.sort(key=lambda x: int(x[:-4]))
+                length_l.sort(key=lambda x: str(x[:-4]))
                 for index in range(0,len(length_l),skip_frames):
                     self.pointcloud_path.append('%s/%s/%s/%s' % (data_dir, seq_num, point_cloud_files,length_d[index]))
                     self.label_path.append('%s/%s/%s/%s' % (data_dir, seq_num,labels_files, length_l[index]))
@@ -46,9 +46,9 @@ class kitti_loader(Dataset):
             seq=['08']
             for seq_num in seq:
                 length_d = os.listdir(os.path.join(data_dir,seq_num,point_cloud_files))
-                length_d.sort(key=lambda x: int(x[:-4]))
+                length_d.sort(key=lambda x: str(x[:-4]))
                 length_l = os.listdir(os.path.join(data_dir, seq_num, labels_files))
-                length_l.sort(key=lambda x: int(x[:-4]))
+                length_l.sort(key=lambda x: str(x[:-4]))
 
                 for index in range(0, len(length_l), skip_frames):
                     self.pointcloud_path.append('%s/%s/%s/%s' % (data_dir, seq_num,point_cloud_files, length_d[index]))

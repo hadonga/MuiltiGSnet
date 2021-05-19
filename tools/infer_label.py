@@ -1,9 +1,9 @@
 import open3d as o3d
 import numpy as np
 
-data_dir="/media/lion/ssd1/pillars_data/00/clip_sn_pc/000000.npy"
-acc_l_dir="/media/lion/ssd1/pillars_data/00/plpt_cl_s_lb/000000.npy"
-cls_l_dir="/media/lion/ssd1/pillars_data/00/pl_cl_s_lb/000000.npy"
+data_dir="/root/dataset/uneven2/sequences/00/pc_s_n/ue_003336.npy"
+acc_l_dir="/root/dataset/uneven2/sequences/00/lb_s_pt/ue_003336.npy"
+cls_l_dir="/root/dataset/uneven2/sequences/00/lb_s_n_pl/ue_003336.npy"
 data=np.load(data_dir)
 acc_l=np.load(acc_l_dir)
 cls_l=np.load(cls_l_dir)
@@ -14,7 +14,7 @@ colors=np.zeros([points.shape[0],3])
 for i in range(points.shape[0]):
     grid_index = (points[i,:2] + 51.2) / 0.8
     if cls_l[int(grid_index[1]),int(grid_index[0])]==1:
-        colors[i,1]=1
+        colors[i, 1]=1
     elif cls_l[int(grid_index[1]),int(grid_index[0])]==0:
         colors[i, 2] = 1
     else :

@@ -48,7 +48,7 @@ def get_net_config():
     """Returns the ViT-B/16 configuration."""
     config = ml_collections.ConfigDict()
     # config.patches = ml_collections.ConfigDict({'size': (16, 16)})
-    config.hidden_size = 384# 768;3072  => 8*8*6 =384 ; 8*8*12=768; 16*16*12= 3072
+    config.hidden_size = 384 # 768;3072  => 8*8*6 =384 ; 8*8*12=768; 16*16*12= 3072  384/64=6
     config.transformer = ml_collections.ConfigDict()
     config.transformer.mlp_dim = 1536 #3072 #12288  # 3072 ??
     config.transformer.num_heads = 6
@@ -199,7 +199,7 @@ class Encoder(nn.Module):
             layer = Block(config) ##（B，64，768）
             self.layer.append(copy.deepcopy(layer))
 
-    def forward(self, hidden_states):  # hidden_states= (B,64,768)
+    def forward(self, hidden_states):  # hidden_states= (B,64,768) 768/64=12
         for layer_block in self.layer:  # list[12] 12条路线
             hidden_states = layer_block(hidden_states)  # （B，64，768）放入 12条线路处理，输出为：#（B，64，768）
         encoded = self.encoder_norm(hidden_states)

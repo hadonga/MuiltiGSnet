@@ -1,9 +1,12 @@
 import numpy as np
 import open3d as o3d
 
-data_dir='/media/lion/ssd/dataset/semantic_kitti/dataset/sequences/00/n_pc/000000.npy'
-data_s_dir='/media/lion/ssd/dataset/semantic_kitti/dataset/sequences/00/sn_pc/000000.npy'
-d_dir='/media/lion/ssd1/pillars_data/00/reduce_velo/000000.npy'
+data_dir='/root/dataset/uneven2/sequences/00/pc_s_n/ue_003336.npy'
+data_s_dir='/root/dataset/uneven2/sequences/00/pc_s_n/ue_003336.npy'
+
+data_dir="/root/dataset/uneven2/sequences/00/pc_s_n/ue_003336.npy"
+acc_l_dir="/root/dataset/uneven2/sequences/00/lb_s_pt/ue_003336.npy"
+cls_l_dir="/root/dataset/uneven2/sequences/00/lb_s_n_pl/ue_003336.npy"
 data=np.load(data_s_dir)
 print(data.shape)
 pcd=o3d.geometry.PointCloud()

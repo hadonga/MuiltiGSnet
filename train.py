@@ -3,7 +3,7 @@
 '''
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # 留出前几个GPU跑其他程序, 需要在导入模型前定义
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 留出前几个GPU跑其他程序, 需要在导入模型前定义
 import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -19,7 +19,7 @@ from model import Our_trans_DSUNet,Our_AUNet,Our_UNet
 from tools.utils import points_to_voxel
 
 parser= argparse.ArgumentParser()
-parser.add_argument('-m','--model',default="Our_trans_DSUNet",
+parser.add_argument('-m','--model',default="Our_AUNet",
                     help="Choose Models: Our_trans_DSUNet, Our_AUNet, Our_UNet")
 parser.add_argument('-d','--dataset_type',default="kitti_data_3")
 args = parser.parse_args()

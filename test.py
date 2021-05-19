@@ -29,15 +29,15 @@ try:
 except:
     print("Error!!! => no config file found at '{}'".format(config_file))
 
-# model = Our_AUNet(cfg)
+model = Our_AUNet(cfg)
 # model= Our_UNet(cfg)
-model= Our_trans_DSUNet(cfg)
+# model= Our_trans_DSUNet(cfg)
 
 if torch.cuda.device_count() > 1:
     model = nn.DataParallel(model)
 model.cuda()
 
-pretrain_dir=os.path.join(cfg.checkpoints_path,'Our_trans_DSUNet_kitti_data_3_epoch_14_date_05111352_best.pth.tar')
+pretrain_dir=os.path.join(cfg.checkpoints_path,'Our_AUNet_kitti_data_3_epoch_8_date_05122317_best.pth.tar')
 checkpoint = torch.load(pretrain_dir)
 model.load_state_dict(checkpoint['state_dict'])
 

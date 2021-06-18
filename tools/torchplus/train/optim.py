@@ -1,11 +1,7 @@
-from collections import defaultdict, Iterable
-
 import torch
-from copy import deepcopy
-from itertools import chain
-from torch.autograd import Variable
 
 required = object()
+
 
 def param_fp32_copy(params):
     param_copy = [
@@ -14,6 +10,7 @@ def param_fp32_copy(params):
     for param in param_copy:
         param.requires_grad = True
     return param_copy
+
 
 def set_grad(params, params_with_grad, scale=1.0):
     for param, param_w_grad in zip(params, params_with_grad):
@@ -24,9 +21,10 @@ def set_grad(params, params_with_grad, scale=1.0):
         if scale is not None:
             grad /= scale
         if torch.isnan(grad).any() or torch.isinf(grad).any():
-            return True # invalid grad
+            return True  # invalid grad
         param.grad.data.copy_(grad)
     return False
+
 
 class MixedPrecisionWrapper(object):
     """mixed precision optimizer wrapper.
@@ -108,4 +106,3 @@ class MixedPrecisionWrapper(object):
         for g, g_copy in zip(self.param_groups, self.optimizer.param_groups):
             for p_copy, p in zip(g_copy['params'], g['params']):
                 p.data.copy_(p_copy.data)
-

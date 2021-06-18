@@ -1,18 +1,18 @@
 import os
+
 path = "/root/dataset/kitti/sequences/"
 for i in os.listdir(path):
-    print("process:",i,"th folder")
-    for j in os.listdir(os.path.join(path,i)):
+    print("process:", i, "th folder")
+    for j in os.listdir(os.path.join(path, i)):
         print(j)
-        if j=="pl_cl_s_lb":
-            os.rename(os.path.join(path,i,j),os.path.join(path,i,"lb_s_pl"))
-        elif j=="plpt_cl_s_lb":
+        if j == "pl_cl_s_lb":
+            os.rename(os.path.join(path, i, j), os.path.join(path, i, "lb_s_pl"))
+        elif j == "plpt_cl_s_lb":
             os.rename(os.path.join(path, i, j), os.path.join(path, i, "lb_s_pt"))
         elif j == "clip_sn_pc":
             os.rename(os.path.join(path, i, j), os.path.join(path, i, "pc_s_n"))
         elif j == "sn_lb":
             os.rename(os.path.join(path, i, j), os.path.join(path, i, "lb_s_n_pl"))
-
 
 # import argparse
 #
@@ -22,7 +22,6 @@ for i in os.listdir(path):
 # args=parser.parse_args()
 #
 # print(args.test)
-
 
 
 # import torch.nn as nn

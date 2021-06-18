@@ -13,21 +13,20 @@ This work is inspired from their public code.
 加入 Trans DSUnet
 '''
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
 import copy
 import logging
 import math
 
 import ml_collections
-from torch.nn import CrossEntropyLoss, Dropout, Softmax, Linear, Conv2d, LayerNorm
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn import Dropout, Softmax, Linear, Conv2d, LayerNorm
 from torch.nn.modules.utils import _pair
-from scipy import ndimage
 
-our_in_ch=64
-our_out_ch=3
+our_in_ch = 64
+our_out_ch = 3
 
 # ---------------------------------------------------------------------------- #
 # Trans DSUnet 网络   136.21M --> 22.16M  -->15.08M
@@ -44,13 +43,14 @@ ATTENTION_NORM = "LayerNorm_0"
 MLP_NORM = "LayerNorm_2"
 ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu}
 
+
 def get_net_config():
     """Returns the ViT-B/16 configuration."""
     config = ml_collections.ConfigDict()
     # config.patches = ml_collections.ConfigDict({'size': (16, 16)})
-    config.hidden_size = 384 # 768;3072  => 8*8*6 =384 ; 8*8*12=768; 16*16*12= 3072  384/64=6
+    config.hidden_size = 384  # 768;3072  => 8*8*6 =384 ; 8*8*12=768; 16*16*12= 3072  384/64=6
     config.transformer = ml_collections.ConfigDict()
-    config.transformer.mlp_dim = 1536 #3072 #12288  # 3072 ??
+    config.transformer.mlp_dim = 1536  # 3072 #12288  # 3072 ??
     config.transformer.num_heads = 6
     config.transformer.num_layers = 6
     config.transformer.attention_dropout_rate = 0.0
@@ -67,11 +67,13 @@ def get_net_config():
     config.activation = 'softmax'
     return config
 
+
 def np2th(weights, conv=False):
     """Possibly convert HWIO to OIHW."""
     if conv:
         weights = weights.transpose([3, 2, 0, 1])
     return torch.from_numpy(weights)
+
 
 class Attention(nn.Module):
     def __init__(self, config):
@@ -118,6 +120,7 @@ class Attention(nn.Module):
         attention_output = self.proj_dropout(attention_output)
         return attention_output, weights
 
+
 class Mlp(nn.Module):
     def __init__(self, config):
         super(Mlp, self).__init__()
@@ -142,6 +145,7 @@ class Mlp(nn.Module):
         x = self.dropout(x)
         return x
 
+
 class Block(nn.Module):
     def __init__(self, config):
         super(Block, self).__init__()
@@ -151,7 +155,7 @@ class Block(nn.Module):
         self.ffn = Mlp(config)
         self.attn = Attention(config)
 
-    def forward(self, x):  #（B，64，768）
+    def forward(self, x):  # （B，64，768）
         h = x
         x = self.attention_norm(x)
         x, weights = self.attn(x)
@@ -161,20 +165,22 @@ class Block(nn.Module):
         x = self.ffn_norm(x)
         x = self.ffn(x)
         x = x + h
-        return x #（B，64，768）
+        return x  # （B，64，768）
+
 
 class Embeddings(nn.Module):
     """Construct the embeddings from patch, position embeddings.
     """
+
     def __init__(self, config, img_size=8, in_channels=512):  # img_size= 8  in_channels=512
         super(Embeddings, self).__init__()
         self.hybrid = None
         self.config = config
-        img_size = _pair(img_size)  #(8,8)
+        img_size = _pair(img_size)  # (8,8)
         patch_size = (1, 1)
         n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])  # (8*8=64)
         self.patch_embeddings = Conv2d(in_channels=in_channels,  # 512   512* 3072 这部分的参数量较多
-                                       out_channels=config.hidden_size,  #768 # 3072
+                                       out_channels=config.hidden_size,  # 768 # 3072
                                        kernel_size=patch_size,  # (1,1)
                                        stride=patch_size)  # (1,1)
         self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches, config.hidden_size))  # (24,64,768)
@@ -188,15 +194,16 @@ class Embeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         return embeddings
 
+
 class Encoder(nn.Module):
     def __init__(self, config):
         super(Encoder, self).__init__()
         self.layer = nn.ModuleList()  # 生成空list并注册到网络
         self.encoder_norm = LayerNorm(config.hidden_size, eps=1e-6)  # 3072
-        self.conv = nn.Conv2d(in_channels=config.hidden_size, out_channels = 512, kernel_size = 1)  # 3072->256 ,但是HW的参数没对齐？
-        self.up=nn.UpsamplingBilinear2d(scale_factor=2)
+        self.conv = nn.Conv2d(in_channels=config.hidden_size, out_channels=512, kernel_size=1)  # 3072->256 ,但是HW的参数没对齐？
+        self.up = nn.UpsamplingBilinear2d(scale_factor=2)
         for _ in range(config.transformer["num_layers"]):  # 12 transformer的层
-            layer = Block(config) ##（B，64，768）
+            layer = Block(config)  ##（B，64，768）
             self.layer.append(copy.deepcopy(layer))
 
     def forward(self, hidden_states):  # hidden_states= (B,64,768) 768/64=12
@@ -206,9 +213,9 @@ class Encoder(nn.Module):
         B, n_patch, hidden = encoded.size()  # (B,64,768)  # reshape from (B, n_patch, hidden) to (B, h, w, hidden)
         h, w = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))  # n_patch=64
         x = encoded.permute(0, 2, 1)
-        x = x.contiguous().view(B, hidden, h, w) # (B,768,8,8)
-        x = self.conv(x) #（B，768，8，8） ??? 需要的输出是 B，512，16，16 论文中使用了 upsampling
-        x = self.up(x) #(B,512,16,16)
+        x = x.contiguous().view(B, hidden, h, w)  # (B,768,8,8)
+        x = self.conv(x)  # （B，768，8，8） ??? 需要的输出是 B，512，16，16 论文中使用了 upsampling
+        x = self.up(x)  # (B,512,16,16)
         return x
 
 
@@ -219,9 +226,10 @@ class Transformer(nn.Module):
         self.encoder = Encoder(config)
 
     def forward(self, input_ids):  # 入口: (B,512,8,8)
-        embedding_output = self.embeddings(input_ids)  #  embedding_output= (B, 64, 768)
-        encoded = self.encoder(embedding_output)  #  output= (B,256,8,8)
+        embedding_output = self.embeddings(input_ids)  # embedding_output= (B, 64, 768)
+        encoded = self.encoder(embedding_output)  # output= (B,256,8,8)
         return encoded
+
 
 # DSC Module
 class OutConv(nn.Module):  # 一般的1x1conv2d.
@@ -231,6 +239,7 @@ class OutConv(nn.Module):  # 一般的1x1conv2d.
 
     def forward(self, x):
         return self.conv(x)
+
 
 class DepthwiseSeparableConv(nn.Module):  # DSC
     def __init__(self, in_channels, output_channels, kernel_size, padding=0, kernels_per_layer=1):
@@ -244,6 +253,7 @@ class DepthwiseSeparableConv(nn.Module):  # DSC
         x = self.depthwise(x)
         x = self.pointwise(x)
         return x
+
 
 class DoubleConvDS(nn.Module):  # 2次DSC
     """(convolution => [BN] => ReLU) * 2"""
@@ -378,6 +388,7 @@ class CBAM(nn.Module):
         out = self.spatial_att(out)
         return out
 
+
 # Trans + DSC + CBAM
 class TransDSUnet_lite(nn.Module):
     def __init__(self, n_channels, n_classes, kernels_per_layer=2, bilinear=True, reduction_ratio=16):
@@ -391,31 +402,31 @@ class TransDSUnet_lite(nn.Module):
 
         self.inc = DoubleConvDS(self.n_channels, 128,
                                 kernels_per_layer=kernels_per_layer)  # (64,128,128) -> (128,128,128)
-        self.cbam1 = CBAM(128, reduction_ratio=reduction_ratio) # (128,128,128)
+        self.cbam1 = CBAM(128, reduction_ratio=reduction_ratio)  # (128,128,128)
         self.down1 = DownDS(128, 256, kernels_per_layer=kernels_per_layer)  # (128,128,128)-> (256,64,64)
-        self.cbam2 = CBAM(256, reduction_ratio=reduction_ratio) # (256,64,64)
+        self.cbam2 = CBAM(256, reduction_ratio=reduction_ratio)  # (256,64,64)
         self.down2 = DownDS(256, 512, kernels_per_layer=kernels_per_layer)  # (256,64,64)-> (512,32,32)
         self.cbam3 = CBAM(512, reduction_ratio=reduction_ratio)
         self.down3 = DownDS(512, 512, kernels_per_layer=kernels_per_layer)  # (512,32,32)-> (512,16,16)
-        self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio) #(512,16,16)
+        self.cbam4 = CBAM(512, reduction_ratio=reduction_ratio)  # (512,16,16)
 
         # factor = 2 if self.bilinear else 1 # factor= 2
         self.down4 = DownDS(512, 512, kernels_per_layer=kernels_per_layer)  # (512,16,16)-> (512,8,8)
         self.trans = Transformer(config=trans_config, img_size=8)  # out:(512,8,8)
 
-        self.up1 = UpDS(1024, 512, self.bilinear, kernels_per_layer=kernels_per_layer) # (1024,8,8) -> (256,16,16)
+        self.up1 = UpDS(1024, 512, self.bilinear, kernels_per_layer=kernels_per_layer)  # (1024,8,8) -> (256,16,16)
 
-        self.up2 = UpDS(1024, 256 , self.bilinear,
+        self.up2 = UpDS(1024, 256, self.bilinear,
                         kernels_per_layer=kernels_per_layer)  # (512,16,16) -> (128,32,32)
-        self.up3 = UpDS(512, 128 , self.bilinear,
+        self.up3 = UpDS(512, 128, self.bilinear,
                         kernels_per_layer=kernels_per_layer)  # (256,32,32) -> (64,64,64)
         self.up4 = UpDS(256, 64, self.bilinear, kernels_per_layer=kernels_per_layer)  # (128,64,64) -> (64,128,128)
         self.outc = OutConv(64, self.n_classes)  # (64,128,128)->(3,128,128)
 
     def forward(self, x):
-        x1 = self.inc(x) # x1: (64,128,128)
+        x1 = self.inc(x)  # x1: (64,128,128)
         x1Att = self.cbam1(x1)
-        x2 = self.down1(x1) # x2 : (128,64,64)
+        x2 = self.down1(x1)  # x2 : (128,64,64)
         x2Att = self.cbam2(x2)
         x3 = self.down2(x2)  # x3 : (256,32,32)
         x3Att = self.cbam3(x3)
@@ -423,7 +434,7 @@ class TransDSUnet_lite(nn.Module):
         # print("x4.size:",x4.size())
         x4Att = self.cbam4(x4)
         x5 = self.down4(x4)  # x5: (512,16,16)
-        x5Trans = self.trans(x5) # trans:(512,8,8)
+        x5Trans = self.trans(x5)  # trans:(512,8,8)
         # print("x5Trans:",x5Trans.size())
         # print("x4Att:", x4Att.size())
 
@@ -862,6 +873,7 @@ class conv_block(nn.Module):
     """
     Convolution Block
     """
+
     def __init__(self, in_ch, out_ch):
         super(conv_block, self).__init__()
         self.conv = nn.Sequential(
@@ -877,10 +889,12 @@ class conv_block(nn.Module):
         x = self.conv(x)
         return x
 
+
 class up_conv(nn.Module):
     """
     Up Convolution Block
     """
+
     def __init__(self, in_ch, out_ch):
         super(up_conv, self).__init__()
         self.up = nn.Sequential(
@@ -1214,7 +1228,6 @@ class AttU_Net(nn.Module):
 
         return out
 
-
 # #未使用R2AttU_Net
 # class R2AttU_Net(nn.Module):
 #     """
@@ -1383,4 +1396,3 @@ class AttU_Net(nn.Module):
 #
 #         output = self.final(x0_4)
 #         return output
-

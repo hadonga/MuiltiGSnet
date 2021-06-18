@@ -2,7 +2,7 @@ import sys
 from collections import OrderedDict
 
 import torch
-from torch.nn import functional as F
+
 
 class Empty(torch.nn.Module):
     def __init__(self, *args, **kwargs):
@@ -14,6 +14,7 @@ class Empty(torch.nn.Module):
         elif len(args) == 0:
             return None
         return args
+
 
 class Sequential(torch.nn.Module):
     r"""A sequential container.

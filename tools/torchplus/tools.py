@@ -1,9 +1,5 @@
-import functools
 import inspect
-import sys
-from collections import OrderedDict
 
-import numba
 import numpy as np
 import torch
 
@@ -43,6 +39,7 @@ def change_default_args(**kwargs):
         return DefaultArgLayer
 
     return layer_wrapper
+
 
 def torch_to_np_dtype(ttype):
     type_map = {

@@ -2,6 +2,7 @@ import datetime
 import os
 import shutil
 
+
 def create_folder(prefix, add_time=True, add_str=None, delete=False):
     additional_str = ''
     if delete is True:

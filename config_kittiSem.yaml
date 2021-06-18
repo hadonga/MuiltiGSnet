@@ -23,9 +23,9 @@ labels_files: "lb_s_pl"
 # VOXEL GENERATION 
 # pc_range: [-49.4, -50, -4, 50.6, 50, 4] # cmcdot grid origin is at base_link not the velodyne so have to crop points from 0.6
 pc_range: [-51.2, -51.2, -4, 51.2, 51.2, 4] # cmcdot grid origin is at base_link not the velodyne so have to shift cropping points
-voxel_size : [0.8, 0.8, 8]
-max_points_voxel : 64
-max_voxels: 16384
+voxel_size: [0.8, 0.8, 8]
+max_points_voxel: 64
+max_voxels: 7000
 input_features: 7
 
 # VOXEL FEATURE EXTRACTOR 
@@ -33,12 +33,12 @@ vfe_filters: [64] # only one filter for now
 with_distance: false
 
 # MODEL PARAMETER
-batch_size: 12 #设置输入模型的batch size
+batch_size: 4 #设置输入模型的batch size
 epochs: 25
-use_norm: true  
+use_norm: true
 num_gpus: 1
-evaluate : false
-save_checkpoints : true
+evaluate: false
+save_checkpoints: true
 base_lr: 0.003 #refer to mit paper
 
 weight_decay: 0.0005

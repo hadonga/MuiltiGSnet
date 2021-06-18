@@ -1,4 +1,5 @@
 import os
+
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # 留出前几个GPU跑其他程序, 需要在导入模型前定义
 import numpy as np
 import torch
@@ -8,7 +9,7 @@ import yaml
 import time
 
 # from gdn_dataset import kitti_gnd
-from model import Our_trans_DSUNet, Our_UNet, Our_AUNet
+from model import Our_AUNet
 from tools.utils import points_to_voxel
 
 '''2021.1.27
@@ -22,9 +23,13 @@ try:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
     print("using config file:", config_file)
     print('\n'.join('%s:%s' % item for item in config_dict.items()))
+
+
     class ConfigClass:
         def __init__(self, **entries):
             self.__dict__.update(entries)
+
+
     cfg = ConfigClass(**config_dict)
 except:
     print("Error!!! => no config file found at '{}'".format(config_file))
@@ -37,17 +42,18 @@ if torch.cuda.device_count() > 1:
     model = nn.DataParallel(model)
 model.cuda()
 
-pretrain_dir=os.path.join(cfg.checkpoints_path,'Our_AUNet_kitti_data_3_epoch_8_date_05122317_best.pth.tar')
+pretrain_dir = os.path.join(cfg.checkpoints_path, 'Our_AUNet_kitti_data_3_epoch_8_date_05122317_best.pth.tar')
 checkpoint = torch.load(pretrain_dir)
 model.load_state_dict(checkpoint['state_dict'])
+
 
 def test():
     model.eval()
     with torch.no_grad():
-        root_dir=os.path.join(cfg.root_dir,'08','pc_s_n')
-        part_list=os.listdir(root_dir)
-        part_list.sort(key=lambda x:str(x[:-4]))
-        time_list=[]
+        root_dir = os.path.join(cfg.root_dir, '08', 'pc_s_n')
+        part_list = os.listdir(root_dir)
+        part_list.sort(key=lambda x: str(x[:-4]))
+        time_list = []
         acc = []
         TPR = []
         FPR = []
@@ -165,6 +171,7 @@ def test():
         np.save(os.path.join(cfg.evaluation_path, cfg.model_name, 'IOU_1'), Iou_1)
         np.save(os.path.join(cfg.evaluation_path, cfg.model_name, 'IOU_2'), Iou_2)
         np.save(os.path.join(cfg.evaluation_path, cfg.model_name, 'F1_score'), F1_score)
+
 
 if __name__ == '__main__':
     test()

@@ -42,12 +42,14 @@ def latest_checkpoint(model_dir, model_name):
     ckpt_file_name = Path(model_dir) / latest_ckpt
     if not ckpt_file_name.is_file():
         return None
-    
+
     return str(ckpt_file_name)
+
 
 def _ordered_unique(seq):
     seen = set()
     return [x for x in seq if not (x in seen or seen.add(x))]
+
 
 def save(model_dir,
          model,
@@ -146,6 +148,7 @@ def try_restore_latest_checkpoints(model_dir, models):
         if latest_ckpt is not None:
             restore(latest_ckpt, model)
 
+
 def restore_latest_checkpoints(model_dir, models):
     name_to_model = _get_name_to_model_map(models)
     for name, model in name_to_model.items():
@@ -154,6 +157,7 @@ def restore_latest_checkpoints(model_dir, models):
             restore(latest_ckpt, model)
         else:
             raise ValueError("model {}\'s ckpt isn't exist".format(name))
+
 
 def restore_models(model_dir, models, global_step):
     name_to_model = _get_name_to_model_map(models)

@@ -1,7 +1,6 @@
-import time
-
 import numba
 import numpy as np
+
 
 @numba.jit(nopython=True)
 def _points_to_voxel_reverse_kernel(points,
@@ -23,33 +22,34 @@ def _points_to_voxel_reverse_kernel(points,
     grid_size = (coors_range[3:] - coors_range[:3]) / voxel_size  # [-51.2, -51.2, -4, 51.2, 51.2, 4] / [0.8,0.8,8?]
     # np.round(grid_size)
     # grid_size = np.round(grid_size).astype(np.int64)(np.int32)
-    grid_size = np.round(grid_size, 0, grid_size).astype(np.int32) #[[?,?,?],0,100?]
-    coor = np.zeros(shape=(3, ), dtype=np.int32) #
+    grid_size = np.round(grid_size, 0, grid_size).astype(np.int32)  # [[?,?,?],0,100?]
+    coor = np.zeros(shape=(3,), dtype=np.int32)  #
     voxel_num = 0
     failed = False
     for i in range(N):
         failed = False
         for j in range(ndim):
-            c = np.floor((points[i, j] - coors_range[j]) / voxel_size[j])# c 是记录的voxel上 x，y，z的编号吗？
+            c = np.floor((points[i, j] - coors_range[j]) / voxel_size[j])  # c 是记录的voxel上 x，y，z的编号吗？
             if c < 0 or c >= grid_size[j]:
                 failed = True
                 break
-            coor[ndim_minus_1 - j] = c #反过来记录？
+            coor[ndim_minus_1 - j] = c  # 反过来记录？
         if failed:
             continue
-        voxelidx = coor_to_voxelidx[coor[0], coor[1], coor[2]] 
+        voxelidx = coor_to_voxelidx[coor[0], coor[1], coor[2]]
         if voxelidx == -1:
             voxelidx = voxel_num
             if voxel_num >= max_voxels:
                 break
             voxel_num += 1
-            coor_to_voxelidx[coor[0], coor[1], coor[2]] = voxelidx #1X128X128
-            coors[voxelidx] = coor #20000X3
-        num = num_points_per_voxel[voxelidx]#20000X1
+            coor_to_voxelidx[coor[0], coor[1], coor[2]] = voxelidx  # 1X128X128
+            coors[voxelidx] = coor  # 20000X3
+        num = num_points_per_voxel[voxelidx]  # 20000X1
         if num < max_points:
             voxels[voxelidx, num] = points[i]
             num_points_per_voxel[voxelidx] += 1
     return voxel_num
+
 
 @numba.jit(nopython=True)
 def _points_to_voxel_kernel(points,
@@ -75,7 +75,7 @@ def _points_to_voxel_kernel(points,
 
     lower_bound = coors_range[:3]
     upper_bound = coors_range[3:]
-    coor = np.zeros(shape=(3, ), dtype=np.int32)
+    coor = np.zeros(shape=(3,), dtype=np.int32)
     voxel_num = 0
     failed = False
     for i in range(N):
@@ -94,21 +94,21 @@ def _points_to_voxel_kernel(points,
             if voxel_num >= max_voxels:
                 break
             voxel_num += 1
-            coor_to_voxelidx[coor[0], coor[1], coor[2]] = voxelidx #
+            coor_to_voxelidx[coor[0], coor[1], coor[2]] = voxelidx  #
             coors[voxelidx] = coor
-        num = num_points_per_voxel[voxelidx] # SIZE:20000X1 ??
-        if num < max_points: # max_points:100
-            voxels[voxelidx, num] = points[i] #voxels:20000X100X3 ?? 100x2000x3
+        num = num_points_per_voxel[voxelidx]  # SIZE:20000X1 ??
+        if num < max_points:  # max_points:100
+            voxels[voxelidx, num] = points[i]  # voxels:20000X100X3 ?? 100x2000x3
             num_points_per_voxel[voxelidx] += 1
     return voxel_num
 
 
-def points_to_voxel(points, #
-                     voxel_size, # [0.8, 0.8, 8]
-                     coors_range, #[-51.2, -51.2, -4, 51.2, 51.2, 4]
-                     max_points=35, #100
-                     reverse_index=True,
-                     max_voxels=20000): #20000
+def points_to_voxel(points,  #
+                    voxel_size,  # [0.8, 0.8, 8]
+                    coors_range,  # [-51.2, -51.2, -4, 51.2, 51.2, 4]
+                    max_points=35,  # 100
+                    reverse_index=True,
+                    max_voxels=20000):  # 20000
     """convert kitti points(N, >=3) to voxels. This version calculate
     everything in one loop. now it takes only 4.2ms(complete point cloud) 
     with jit and 3.2ghz cpu.(don't calculate other features)
@@ -145,14 +145,14 @@ def points_to_voxel(points, #
     if reverse_index:
         voxelmap_shape = voxelmap_shape[::-1]
     # don't create large array in jit(nopython=True) code.
-    num_points_per_voxel = np.zeros(shape=(max_voxels, ), dtype=np.int32) #20000
-    coor_to_voxelidx = -np.ones(shape=voxelmap_shape, dtype=np.int32) # 120*120*1
+    num_points_per_voxel = np.zeros(shape=(max_voxels,), dtype=np.int32)  # 20000
+    coor_to_voxelidx = -np.ones(shape=voxelmap_shape, dtype=np.int32)  # 120*120*1
     voxels = np.zeros(
-        shape=(max_voxels, max_points, points.shape[-1]), dtype=points.dtype) #20000*35*4
-    coors = np.zeros(shape=(max_voxels, 3), dtype=np.int32) #20000*3
+        shape=(max_voxels, max_points, points.shape[-1]), dtype=points.dtype)  # 20000*35*4
+    coors = np.zeros(shape=(max_voxels, 3), dtype=np.int32)  # 20000*3
     if reverse_index:
         voxel_num = _points_to_voxel_reverse_kernel(
-            points, voxel_size, coors_range, num_points_per_voxel, #
+            points, voxel_size, coors_range, num_points_per_voxel,  #
             coor_to_voxelidx, voxels, coors, max_points, max_voxels)
 
     else:
@@ -160,12 +160,12 @@ def points_to_voxel(points, #
             points, voxel_size, coors_range, num_points_per_voxel,
             coor_to_voxelidx, voxels, coors, max_points, max_voxels)
 
-    coors = coors[:voxel_num] # voxel_num x3
-    voxels = voxels[:voxel_num] #voxel_num x 35 x 4
-    num_points_per_voxel = num_points_per_voxel[:voxel_num]#voxel_numx1 
+    coors = coors[:voxel_num]  # voxel_num x3
+    voxels = voxels[:voxel_num]  # voxel_num x 35 x 4
+    num_points_per_voxel = num_points_per_voxel[:voxel_num]  # voxel_numx1
     # voxels[:, :, -3:] = voxels[:, :, :3] - \
     #     voxels[:, :, :3].sum(axis=1, keepdims=True)/num_points_per_voxel.reshape(-1, 1, 1)
-    return voxels, coors, num_points_per_voxel #？
+    return voxels, coors, num_points_per_voxel  # ？
 
 
 @numba.jit(nopython=True)
@@ -174,7 +174,7 @@ def bound_points_jit(points, upper_bound, lower_bound):
     # convert result to np.bool after this function.
     N = points.shape[0]
     ndim = points.shape[1]
-    keep_indices = np.zeros((N, ), dtype=np.int32)
+    keep_indices = np.zeros((N,), dtype=np.int32)
     success = 0
     for i in range(N):
         success = 1

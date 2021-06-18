@@ -24,6 +24,7 @@ class Scalar(nn.Module):
         self.total.zero_()
         self.count.zero_()
 
+
 class Accuracy(nn.Module):
     def __init__(self,
                  dim=1,
@@ -64,6 +65,7 @@ class Accuracy(nn.Module):
         self.total += total
         return self.value.cpu()
         # return (total /  num_examples.data).cpu()
+
     @property
     def value(self):
         return self.total / self.count
@@ -90,7 +92,7 @@ class Precision(nn.Module):
                            self._threshold).long().squeeze(self._dim)
         else:
             assert preds.shape[
-                self._dim] == 2, "precision only support 2 class"
+                       self._dim] == 2, "precision only support 2 class"
             pred_labels = torch.max(preds, dim=self._dim)[1]
         N, *Ds = labels.shape
         labels = labels.view(N, int(np.prod(Ds)))
@@ -115,9 +117,11 @@ class Precision(nn.Module):
             self.total += true_positives
         return self.value.cpu()
         # return (total /  num_examples.data).cpu()
+
     @property
     def value(self):
         return self.total / self.count
+
     def clear(self):
         self.total.zero_()
         self.count.zero_()
@@ -140,7 +144,7 @@ class Recall(nn.Module):
                            self._threshold).long().squeeze(self._dim)
         else:
             assert preds.shape[
-                self._dim] == 2, "precision only support 2 class"
+                       self._dim] == 2, "precision only support 2 class"
             pred_labels = torch.max(preds, dim=self._dim)[1]
         N, *Ds = labels.shape
         labels = labels.view(N, int(np.prod(Ds)))
@@ -163,9 +167,11 @@ class Recall(nn.Module):
             self.total += true_positives
         return self.value.cpu()
         # return (total /  num_examples.data).cpu()
+
     @property
     def value(self):
         return self.total / self.count
+
     def clear(self):
         self.total.zero_()
         self.count.zero_()
@@ -176,7 +182,6 @@ def _calc_binary_metrics(labels,
                          weights=None,
                          ignore_idx=-1,
                          threshold=0.5):
-
     pred_labels = (scores > threshold).long()
     N, *Ds = labels.shape
     labels = labels.view(N, int(np.prod(Ds)))
@@ -263,6 +268,7 @@ class PrecisionRecall(nn.Module):
 
         return self.value
         # return (total /  num_examples.data).cpu()
+
     @property
     def value(self):
         prec_count = torch.clamp(self.prec_count, min=1.0)

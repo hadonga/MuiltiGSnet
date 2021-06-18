@@ -1,8 +1,8 @@
-import numpy as np
-import open3d as o3d
 import os
 from multiprocessing import Process
-from tqdm import tqdm
+
+import numpy as np
+import open3d as o3d
 import yaml
 
 '''
@@ -41,6 +41,7 @@ except:
 
 root_path = cfg.root_dir
 
+
 class bin():
     def __init__(self):
         self.has_point = False
@@ -52,7 +53,7 @@ class bin():
         self.normal = [0, 0, 1]
         self.points = []
 
-    def add_point(self,p):
+    def add_point(self, p):
         if not self.has_point:
             self.has_point = True
         self.num_g += 1
@@ -80,8 +81,8 @@ class bin():
         '''
 
     def get_has_normal(self):
-        if len(self.points)>5:
-            self.has_normal=True
+        if len(self.points) > 5:
+            self.has_normal = True
 
     def get_clf(self):
         if self.has_point:
@@ -118,26 +119,35 @@ class bin():
             self.normal = np.array([(a / ((a * a + b * b + c * c) ** 0.5)), (b / ((a * a + b * b + c * c) ** 0.5)),
                                     (c / ((a * a + b * b + c * c) ** 0.5))])
 
+
 '''网格图的上限'''
+
+
 def limit_up(i, counter):
     if counter + i + 1 > 127:
         return 127
     else:
         return counter + i + 1
 
+
 '''网格图的下限'''
+
+
 def limit_dn(i, counter):
     if i - counter < 0:
         return 0
     else:
         return i - counter
 
+
 '''得到pillar中有点，但地面点数量少于5个的pillar的法向量'''
-def fill_normal(grid,i,j):
-    counter=1
-    has_normal=False
-    pcd=[]
-    cloud=o3d.geometry.PointCloud()
+
+
+def fill_normal(grid, i, j):
+    counter = 1
+    has_normal = False
+    pcd = []
+    cloud = o3d.geometry.PointCloud()
     while not has_normal:
         pcd.clear()
         for i_i in range(limit_dn(i, counter), limit_up(i, counter)):
@@ -165,35 +175,38 @@ def fill_normal(grid,i,j):
             has_normal = True
             cloud.points = o3d.utility.Vector3dVector(np.array(pcd))
             plane_model, inliers = cloud.segment_plane(distance_threshold=0.02,
-                                                          ransac_n=5,
-                                                          num_iterations=5)
+                                                       ransac_n=5,
+                                                       num_iterations=5)
             [a, b, c, d] = plane_model
             return np.array([(a / ((a * a + b * b + c * c) ** 0.5)), (b / ((a * a + b * b + c * c) ** 0.5)),
-                                    (c / ((a * a + b * b + c * c) ** 0.5))])
+                             (c / ((a * a + b * b + c * c) ** 0.5))])
 
 
 def get_index(point):
-    temp=max(abs(point[0]),abs(point[1]))
-    return int(np.floor(temp/0.5))
+    temp = max(abs(point[0]), abs(point[1]))
+    return int(np.floor(temp / 0.5))
+
 
 def my_function(points):
     counter = np.zeros([104, 1])
-    max_num=0
+    max_num = 0
     for i in range(len(points)):
         index = get_index(points[i])
         counter[int(index)] = counter[int(index)] + 1
-        if max_num<counter[int(index)]:
-            max_num=counter[int(index)]
-    counter=max_num*2-counter
+        if max_num < counter[int(index)]:
+            max_num = counter[int(index)]
+    counter = max_num * 2 - counter
     return counter
 
+
 def my_probability(points):
-    p=np.zeros([len(points),],dtype=float)#初始化为0，后续存储每个点的概率
-    counter=my_function(points) #划分各个区域，返回每个区域点的个数，区域为方形环，固定宽度0.5m
+    p = np.zeros([len(points), ], dtype=float)  # 初始化为0，后续存储每个点的概率
+    counter = my_function(points)  # 划分各个区域，返回每个区域点的个数，区域为方形环，固定宽度0.5m
     for i in range(len(points)):
-        p[i]=counter[get_index(points[i])]
-    p=p/p.sum()
+        p[i] = counter[get_index(points[i])]
+    p = p / p.sum()
     return p
+
 
 class ground_grid():
     def __init__(self, data_path, label_path):
@@ -201,10 +214,10 @@ class ground_grid():
         self.data_path = data_path
         self.label_path = label_path
         self.root_path = root_path
-        self.acc_lb=[]
+        self.acc_lb = []
         self.map_label = np.zeros([128, 128])
         self.pcd = o3d.geometry.PointCloud()
-        self.ground=[]
+        self.ground = []
         self.normal = np.zeros([128, 128, 3])  # [y,x,n]
         for i in range(128):
             self.ground.append([])
@@ -216,12 +229,12 @@ class ground_grid():
         data = np.fromfile(self.data_path, dtype=np.float32).reshape(-1, 4)
         label = np.fromfile(self.label_path, dtype=np.uint32).reshape((-1))
         data = np.vstack((data.T, label)).T
-        #num_g = 0
-        #num_non_g = 0
-        #data = np.array([x for x in data if (0 < x[0] + 51.2 < 102.4 and 0 < x[1] + 51.2 < 102.4)])
+        # num_g = 0
+        # num_non_g = 0
+        # data = np.array([x for x in data if (0 < x[0] + 51.2 < 102.4 and 0 < x[1] + 51.2 < 102.4)])
         for x in data:
             if (0 < x[0] + 51.2 < 102.4 and 0 < x[1] + 51.2 < 102.4):
-                x[2]+=1.733
+                x[2] += 1.733
                 self.cloud.append(x[:5])
                 self.acc_lb.append(x[4])
                 '''
@@ -247,12 +260,12 @@ class ground_grid():
         self.n_pc = np.vstack((self.cloud[:, :4].T, self.all_normal.T)).T
 
         if cfg.physical_sampling:
-            if len(self.cloud)>=100000:
+            if len(self.cloud) >= 100000:
                 choice = np.random.choice(len(self.cloud), 100000, replace=False, p=my_probability(self.cloud))
-                self.s_pc=self.cloud[choice]
-                self.l_s=self.acc_lb[choice]
-                self.s_n=self.all_normal[choice]
-                self.sn_pc = np.vstack((self.s_pc[:,:4].T, self.s_n.T)).T
+                self.s_pc = self.cloud[choice]
+                self.l_s = self.acc_lb[choice]
+                self.s_n = self.all_normal[choice]
+                self.sn_pc = np.vstack((self.s_pc[:, :4].T, self.s_n.T)).T
                 for x in self.s_pc:
                     if x[4] == 40 or x[4] == 44 or x[4] == 48 or x[4] == 49 or x[4] == 60:  # 地面点判断
                         grid_index = (x[:2] + 51.2) / 0.8
@@ -279,7 +292,7 @@ class ground_grid():
             self.deal_ground()
             self.save_result()
 
-        #print("地面点：", num_g, "----非地面点：", num_non_g)
+        # print("地面点：", num_g, "----非地面点：", num_non_g)
 
     def deal_ground(self):
         for i in range(128):
@@ -294,12 +307,11 @@ class ground_grid():
                 elif not self.ground[i][j].has_normal and self.ground[i][j].has_point:
                     self.normal[i, j] = fill_normal(self.ground, i, j)
 
-
     def save_result(self):
         part = self.data_path.split('/')[-3]
         index = self.data_path.split('/')[-1]
         index = index[:-4]
-        #存储数据
+        # 存储数据
         if cfg.physical_sampling:
             np.save(os.path.join(self.root_path, part, 'clip_sn_pc', index), np.array(self.sn_pc))
             np.save(os.path.join(self.root_path, part, 'pl_cl_s_lb', index), np.array(self.map_label))
@@ -311,6 +323,7 @@ class ground_grid():
             np.save(os.path.join(self.root_path, part, 'pl_cl_lb', index), np.array(self.map_label))
             np.save(os.path.join(self.root_path, part, 'n_lb', index), np.array(self.normal))
 
+
 class my_process(Process):
     def __init__(self, num):
         super(my_process, self).__init__()
@@ -318,15 +331,17 @@ class my_process(Process):
 
     def run(self):
         counter = 0
-        #discard=0
-        while counter*worker+self.num<len(d_dir):
-            ground = ground_grid(d_dir[counter*worker+self.num], l_dir[counter*worker+self.num])
+        # discard=0
+        while counter * worker + self.num < len(d_dir):
+            ground = ground_grid(d_dir[counter * worker + self.num], l_dir[counter * worker + self.num])
             ground.in_put()
             if counter % 10 == 0:
-                print("worker_%d:complete data:"%self.num, counter)
-                #print("worker_%d:discard data:"%self.num, discard)
-            counter=counter+1
-#创建目录
+                print("worker_%d:complete data:" % self.num, counter)
+                # print("worker_%d:discard data:"%self.num, discard)
+            counter = counter + 1
+
+
+# 创建目录
 def pre_deal(root_path):
     if cfg.physical_sampling:
         if not os.path.exists(os.path.join(root_path, 'clip_sn_pc')):
@@ -350,20 +365,20 @@ def pre_deal(root_path):
 
 print("gen_clip_sn data product starts")
 
-part=['00','01','02','03','04','05','06','07','08','09','10']
+part = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10']
 part_length = {'00': 4541, '01': 1101, '02': 4661, '03': 801, '04': 271, '05': 2761,
-                   '06': 1101, '07': 1101, '08': 4071, '09': 1591, '10': 1201}
-d_dir=[]
-l_dir=[]
+               '06': 1101, '07': 1101, '08': 4071, '09': 1591, '10': 1201}
+d_dir = []
+l_dir = []
 
 for part_i in part:
-    pre_deal(os.path.join(root_path,part_i))
+    pre_deal(os.path.join(root_path, part_i))
     for index in range(part_length[part_i]):
-        d_dir.append(os.path.join(root_path,part_i,'velodyne','%06d.bin'%index))
-        l_dir.append(os.path.join(root_path,part_i,'labels','%06d.label'%index))
+        d_dir.append(os.path.join(root_path, part_i, 'velodyne', '%06d.bin' % index))
+        l_dir.append(os.path.join(root_path, part_i, 'labels', '%06d.label' % index))
 
 process_list = []
-worker=8
+worker = 8
 for num in range(worker):
     pr = my_process(num)
     pr.start()

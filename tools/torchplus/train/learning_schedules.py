@@ -3,6 +3,8 @@ detection API.
 """
 import numpy as np
 from torch.optim.optimizer import Optimizer
+
+
 class _LRSchedulerStep(object):
     def __init__(self, optimizer, last_step=-1):
         if not isinstance(optimizer, Optimizer):
@@ -18,7 +20,7 @@ class _LRSchedulerStep(object):
                     raise KeyError(
                         "param 'initial_lr' is not specified "
                         "in param_groups[{}] when resuming an optimizer".
-                        format(i))
+                            format(i))
         self.base_lrs = list(
             map(lambda group: group['initial_lr'], optimizer.param_groups))
         self.step(last_step + 1)
@@ -63,10 +65,10 @@ class ManualStepping(_LRSchedulerStep):
         self._learning_rates = rates
 
         if any([b < 0 for b in boundaries]) or any(
-            [not isinstance(b, int) for b in boundaries]):
+                [not isinstance(b, int) for b in boundaries]):
             raise ValueError('boundaries must be a list of positive integers')
         if any(
-            [bnext <= b for bnext, b in zip(boundaries[1:], boundaries[:-1])]):
+                [bnext <= b for bnext, b in zip(boundaries[1:], boundaries[:-1])]):
             raise ValueError(
                 'Entries in boundaries must be strictly increasing.')
         if any([not isinstance(r, float) for r in rates]):
@@ -134,10 +136,10 @@ class ExponentialDecay(_LRSchedulerStep):
         step = self.last_step
         if self._staircase:
             post_burnin_learning_rate = base_lr * pow(self._decay_factor,
-                                         (step // self._decay_steps))
+                                                      (step // self._decay_steps))
         else:
             post_burnin_learning_rate = base_lr * pow(self._decay_factor,
-                                         (step / self._decay_steps))
+                                                      (step / self._decay_steps))
 
         return post_burnin_learning_rate
 
@@ -165,9 +167,9 @@ class CosineDecayWithWarmup(_LRSchedulerStep):
 
         step = self.last_step
         learning_rate = 0.5 * base_lr * (
-            1 + np.cos(np.pi *
-                       (float(step) - self._warmup_steps
-                        ) / float(self._total_steps - self._warmup_steps)))
+                1 + np.cos(np.pi *
+                           (float(step) - self._warmup_steps
+                            ) / float(self._total_steps - self._warmup_steps)))
         if self._warmup_steps > 0:
             slope = (base_lr - self._warmup_learning_rate) / self._warmup_steps
             pre_cosine_learning_rate = slope * float(
